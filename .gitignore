@@ -9,6 +9,7 @@
 *.keystore
 keystore.properties
 release-keystore.jks
+.signing/
 *.apk
 *.aab
 captures/
