@@ -81,6 +81,7 @@ class DiagnosticsManager(
             .buildUpon()
             .appendQueryParameter("title", title)
             .appendQueryParameter("body", body)
+            .appendQueryParameter("labels", "diagnostic-log")
             .build()
         return Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
