@@ -31,8 +31,8 @@ android {
         applicationId = "com.tzt.btcmonitor"
         minSdk = 36
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
 
         buildConfigField("String", "GITHUB_OWNER", "\"tztkkk\"")
         buildConfigField("String", "GITHUB_REPO", "\"BTCMonitor\"")

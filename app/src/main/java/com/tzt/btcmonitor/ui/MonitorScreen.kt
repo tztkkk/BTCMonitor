@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tzt.btcmonitor.logging.LogEntry
 import com.tzt.btcmonitor.logging.LogLevel
+import com.tzt.btcmonitor.market.MarketProbeStatus
+import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.MonitorState
 import com.tzt.btcmonitor.model.NetworkType
@@ -85,6 +87,7 @@ fun MonitorApp(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val update by viewModel.updateState.collectAsStateWithLifecycle()
+    val marketProbe by viewModel.marketProbeState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
 
@@ -123,9 +126,11 @@ fun MonitorApp(
                         monitor = monitor,
                         settings = settings,
                         update = update,
+                        marketProbe = marketProbe,
                         onStart = { runWithNotificationPermission(viewModel::startMonitoring) },
                         onStop = viewModel::stopMonitoring,
                         onTest = { runWithNotificationPermission(viewModel::sendTestNotification) },
+                        onTestMarketData = viewModel::testMarketData,
                         onSaveAlert = { enabled, direction, threshold ->
                             viewModel.saveAlert(enabled, direction, threshold) { message = it }
                         },
@@ -157,9 +162,11 @@ private fun MonitorPanel(
     monitor: MonitorState,
     settings: AppSettings,
     update: UpdateUiState,
+    marketProbe: MarketProbeUiState,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onTest: () -> Unit,
+    onTestMarketData: () -> Unit,
     onSaveAlert: (Boolean, AlertDirection, String) -> Unit,
     onCheckUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -224,8 +231,60 @@ private fun MonitorPanel(
             )
         }
 
+        MarketProbeCard(marketProbe, onTestMarketData)
+
         UpdateCard(update, onCheckUpdate, onDownloadUpdate, onOpenUnknownSources)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun MarketProbeCard(state: MarketProbeUiState, onRun: () -> Unit) {
+    SectionCard("行情获取测试") {
+        Text(
+            "独立测试每个 WebSocket 端点的连接、订阅和首个 BTC-USDT 行情；不会启动 Service、策略或提醒。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Button(
+            onClick = onRun,
+            enabled = !state.running,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (state.running) "测试进行中…" else "测试行情获取")
+        }
+        if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+
+        state.results.forEach { result ->
+            HorizontalDivider()
+            Text(result.endpoint.label, fontWeight = FontWeight.SemiBold)
+            Text(
+                result.endpoint.url,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace
+            )
+            StatusLine(
+                "结果",
+                when (result.status) {
+                    MarketProbeStatus.NOT_TESTED -> "尚未测试"
+                    MarketProbeStatus.TESTING -> "连接中"
+                    MarketProbeStatus.SUCCESS -> "成功"
+                    MarketProbeStatus.FAILED -> "失败"
+                }
+            )
+            result.latencyMillis?.let { StatusLine("耗时", "$it ms") }
+            result.price?.let { StatusLine("BTC-USDT", "${"%.2f".format(it)} USDT") }
+            if (result.status != MarketProbeStatus.NOT_TESTED) {
+                Text(
+                    result.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (result.status == MarketProbeStatus.FAILED) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+        }
     }
 }
 

@@ -7,8 +7,9 @@
 - `applicationId = com.tzt.btcmonitor`
 - Android 16 only：`minSdk = compileSdk = targetSdk = 36`
 - Kotlin + Jetpack Compose + Coroutines
-- OKX 公共 WebSocket：`tickers / BTC-USDT`（本地最多每秒分发一次，避免 100ms 推送造成不必要耗电）
+- OKX 公共 WebSocket：`tickers / BTC-USDT`（官方 8443、标准 443、AWS 8443 自动轮换；本地最多每秒分发一次）
 - OkHttp WebSocket，20 秒 ping，1/2/5/10/30 秒退避重连
+- 独立“行情获取测试”，逐端点验证握手、订阅、首个 Tick、价格、耗时和底层错误，不启动 Service 或策略
 - DataStore 配置，前台服务，两个通知通道
 - 完整诊断日志导出/分享，以及无需在 APK 保存 Token 的 GitHub Issue 提交
 - GitHub Releases 检查、下载、SHA-256/包名/versionCode/签名校验和系统安装器
@@ -16,7 +17,7 @@
 ## 架构判断
 
 ```text
-Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager
+Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager / MarketDataProbe
                       │
                       └──用户点击──> MarketMonitorService (specialUse FGS)
                                          ├── NetworkMonitor
@@ -26,7 +27,7 @@ Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager
                                          └── MonitorStateStore / LogManager
 ```
 
-WebSocket 不在 Activity 中。Service 只编排生命周期；连接与退避在 `MarketDataManager`，网络切换在 `NetworkMonitor`，状态变化触发在 `StrategyEngine`，通知和更新也各自独立。以后添加指标时，可以从 MarketTick/K 线聚合层进入 StrategyEngine，而不需要改 Service 的通知逻辑。
+WebSocket 不在 Activity 中。Service 只编排生命周期；连接与退避在 `MarketDataManager`，前台独立诊断在 `MarketDataProbe`，网络切换在 `NetworkMonitor`，状态变化触发在 `StrategyEngine`，通知和更新也各自独立。以后添加指标时，可以从 MarketTick/K 线聚合层进入 StrategyEngine，而不需要改 Service 的通知逻辑。
 
 ### 为什么是 `specialUse`
 

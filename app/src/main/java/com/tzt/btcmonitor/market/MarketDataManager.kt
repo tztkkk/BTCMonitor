@@ -84,11 +84,15 @@ class MarketDataManager(
         if (!running || !networkAvailable || socket != null) return
         val myGeneration = ++generation
         val reconnecting = reconnectAttempt > 0
+        val endpoint = MarketEndpoints.forAttempt(reconnectAttempt)
         onStatus(if (reconnecting) WebSocketStatus.RECONNECTING else WebSocketStatus.CONNECTING)
-        logs.log("WebSocketConnecting", "OKX BTC-USDT attempt=${reconnectAttempt + 1}")
+        logs.log(
+            "WebSocketConnecting",
+            "${endpoint.label} BTC-USDT attempt=${reconnectAttempt + 1} url=${endpoint.url}"
+        )
 
         val request = Request.Builder()
-            .url(OKX_PUBLIC_STREAM)
+            .url(endpoint.url)
             .header("User-Agent", "BTCMonitor-Android/${com.tzt.btcmonitor.BuildConfig.VERSION_NAME}")
             .build()
 
@@ -102,7 +106,10 @@ class MarketDataManager(
                     val wasReconnect = reconnectAttempt > 0
                     reconnectAttempt = 0
                     onStatus(WebSocketStatus.CONNECTED)
-                    logs.log(if (wasReconnect) "ReconnectSuccess" else "WebSocketConnected", response.message)
+                    logs.log(
+                        if (wasReconnect) "ReconnectSuccess" else "WebSocketConnected",
+                        "${endpoint.label} HTTP ${response.code} ${response.message}"
+                    )
                     if (!webSocket.send(SUBSCRIBE_MESSAGE)) {
                         logs.log("WebSocketError", "OKX subscription send failed", LogLevel.ERROR)
                         webSocket.cancel()
@@ -142,7 +149,7 @@ class MarketDataManager(
                     heartbeatJob = null
                     socket = null
                     connected = false
-                    logs.log("WebSocketDisconnected", "code=$code reason=$reason")
+                    logs.log("WebSocketDisconnected", "${endpoint.label} code=$code reason=$reason")
                     onStatus(WebSocketStatus.DISCONNECTED)
                     scheduleReconnect()
                 }
@@ -155,7 +162,12 @@ class MarketDataManager(
                     heartbeatJob = null
                     socket = null
                     connected = false
-                    logs.log("WebSocketError", t.message ?: t.javaClass.simpleName, LogLevel.ERROR)
+                    val http = response?.let { " HTTP ${it.code}" }.orEmpty()
+                    logs.log(
+                        "WebSocketError",
+                        "${endpoint.label} ${MarketDataProbe.exceptionDetail(t)}$http",
+                        LogLevel.ERROR
+                    )
                     onStatus(WebSocketStatus.DISCONNECTED)
                     scheduleReconnect()
                 }
@@ -226,7 +238,6 @@ class MarketDataManager(
     }
 
     companion object {
-        private const val OKX_PUBLIC_STREAM = "wss://ws.okx.com:8443/ws/v5/public"
         private const val SUBSCRIBE_MESSAGE =
             "{\"id\":\"btc-monitor\",\"op\":\"subscribe\",\"args\":[{\"channel\":\"tickers\",\"instId\":\"BTC-USDT\"}]}"
         private const val TICK_DISPATCH_INTERVAL_MS = 1_000L

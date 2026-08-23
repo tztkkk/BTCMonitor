@@ -6,20 +6,30 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tzt.btcmonitor.AppContainer
 import com.tzt.btcmonitor.BuildConfig
+import com.tzt.btcmonitor.market.MarketDataProbe
+import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.service.MarketMonitorService
 import com.tzt.btcmonitor.settings.AppSettings
 import com.tzt.btcmonitor.update.UpdateUiState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MonitorViewModel(application: Application) : AndroidViewModel(application) {
+    private val marketProbe = MarketDataProbe(AppContainer.logs)
+    private val mutableMarketProbeState = MutableStateFlow(MarketProbeUiState())
+    private var marketProbeJob: Job? = null
+
     val monitorState = AppContainer.monitorState.state
     val logs = AppContainer.logs.entries
     val updateState: StateFlow<UpdateUiState> = AppContainer.updates.state
+    val marketProbeState: StateFlow<MarketProbeUiState> = mutableMarketProbeState.asStateFlow()
     val settings: StateFlow<AppSettings> = AppContainer.settings.settings.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -62,6 +72,25 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
                 currentPrice = monitorState.value.currentPrice ?: 120_125.3,
                 test = true
             )
+        }
+    }
+
+    fun testMarketData() {
+        if (marketProbeJob?.isActive == true) return
+        marketProbeJob = viewModelScope.launch {
+            mutableMarketProbeState.value = MarketProbeUiState(running = true)
+            try {
+                marketProbe.run { result ->
+                    val current = mutableMarketProbeState.value
+                    mutableMarketProbeState.value = current.copy(
+                        results = current.results.map { existing ->
+                            if (existing.endpoint.id == result.endpoint.id) result else existing
+                        }
+                    )
+                }
+            } finally {
+                mutableMarketProbeState.value = mutableMarketProbeState.value.copy(running = false)
+            }
         }
     }
 
