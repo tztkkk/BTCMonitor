@@ -72,8 +72,9 @@ class MarketDataProbe(private val logs: LogManager) {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     runCatching {
                         val json = JSONObject(text)
-                        if (json.optString("event") == "error") {
-                            error("OKX ${json.optString("code")}: ${json.optString("msg")}")
+                        OkxProtocol.errorDetail(json)?.let { detail ->
+                            finish(ProbeOutcome.Failure("订阅被拒绝：$detail"))
+                            return
                         }
                         val data = json.optJSONArray("data") ?: return
                         if (data.length() == 0) return
@@ -129,8 +130,7 @@ class MarketDataProbe(private val logs: LogManager) {
     }
 
     companion object {
-        const val SUBSCRIBE_MESSAGE =
-            "{\"id\":\"btc-monitor-probe\",\"op\":\"subscribe\",\"args\":[{\"channel\":\"tickers\",\"instId\":\"BTC-USDT\"}]}"
+        const val SUBSCRIBE_MESSAGE = OkxProtocol.PROBE_SUBSCRIBE_MESSAGE
         private const val CONNECT_TIMEOUT_SECONDS = 8L
         private const val PROBE_TIMEOUT_MS = 12_000L
         private const val BETWEEN_ENDPOINTS_MS = 300L

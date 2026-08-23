@@ -125,6 +125,11 @@ class MarketDataManager(
                     lastMessageMillis = System.currentTimeMillis()
                     pingSentMillis = null
                     if (text == "pong") return@launch
+                    OkxProtocol.errorDetail(text)?.let { detail ->
+                        logs.log("WebSocketError", "${endpoint.label} subscription rejected: $detail", LogLevel.ERROR)
+                        webSocket.cancel()
+                        return@launch
+                    }
                     val now = System.currentTimeMillis()
                     parseTick(text)?.let { tick ->
                         if (now - lastDispatchMillis < TICK_DISPATCH_INTERVAL_MS) return@let
@@ -201,9 +206,6 @@ class MarketDataManager(
 
     private fun parseTick(text: String): MarketTick? = runCatching {
         val json = JSONObject(text)
-        if (json.optString("event") == "error") {
-            error("OKX ${json.optString("code")}: ${json.optString("msg")}")
-        }
         val data = json.optJSONArray("data") ?: return@runCatching null
         if (data.length() == 0) return@runCatching null
         val ticker = data.getJSONObject(0)
@@ -238,8 +240,7 @@ class MarketDataManager(
     }
 
     companion object {
-        private const val SUBSCRIBE_MESSAGE =
-            "{\"id\":\"btc-monitor\",\"op\":\"subscribe\",\"args\":[{\"channel\":\"tickers\",\"instId\":\"BTC-USDT\"}]}"
+        private const val SUBSCRIBE_MESSAGE = OkxProtocol.MONITOR_SUBSCRIBE_MESSAGE
         private const val TICK_DISPATCH_INTERVAL_MS = 1_000L
         private const val TICK_LOG_INTERVAL_MS = 60_000L
         private const val HEARTBEAT_CHECK_INTERVAL_MS = 10_000L

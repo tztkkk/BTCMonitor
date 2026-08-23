@@ -10,6 +10,7 @@
 keystore.properties
 release-keystore.jks
 .signing/
+.codex-remote-attachments/
 *.apk
 *.aab
 captures/
