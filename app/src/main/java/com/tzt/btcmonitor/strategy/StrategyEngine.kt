@@ -5,45 +5,47 @@ import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.MarketTick
 import com.tzt.btcmonitor.model.StrategyResult
 
-class StrategyEngine(initialConfig: AlertConfig = AlertConfig()) {
-    private var config = initialConfig
-    private var previousCondition: Boolean? = null
+class StrategyEngine(initialConfigs: List<AlertConfig> = emptyList()) {
+    private var configs = initialConfigs.distinctBy(AlertConfig::id)
+    private val previousConditions = mutableMapOf<String, Boolean>()
 
     @Synchronized
-    fun updateConfig(newConfig: AlertConfig) {
-        if (newConfig != config) {
-            config = newConfig
-            previousCondition = null
-        }
+    fun updateConfigs(newConfigs: List<AlertConfig>) {
+        val normalized = newConfigs.distinctBy(AlertConfig::id)
+        val oldById = configs.associateBy(AlertConfig::id)
+        val changedIds = normalized.filter { oldById[it.id] != it }.mapTo(mutableSetOf(), AlertConfig::id)
+        previousConditions.keys.retainAll(normalized.mapTo(mutableSetOf(), AlertConfig::id))
+        changedIds.forEach(previousConditions::remove)
+        configs = normalized
     }
 
     @Synchronized
-    fun evaluate(tick: MarketTick): StrategyResult {
+    fun evaluate(tick: MarketTick): List<StrategyResult> = configs.mapNotNull { config ->
         if (!config.enabled || tick.symbol != config.symbol) {
-            previousCondition = null
-            return StrategyResult(triggered = false, isConditionMet = false)
+            previousConditions.remove(config.id)
+            return@mapNotNull null
         }
 
         val condition = when (config.direction) {
             AlertDirection.ABOVE_OR_EQUAL -> tick.price >= config.threshold
             AlertDirection.BELOW_OR_EQUAL -> tick.price <= config.threshold
         }
-        val triggered = previousCondition == false && condition
-        previousCondition = condition
-
+        val triggered = previousConditions[config.id] == false && condition
+        previousConditions[config.id] = condition
         val operator = if (config.direction == AlertDirection.ABOVE_OR_EQUAL) "突破" else "跌破"
-        return StrategyResult(
+        StrategyResult(
+            alertId = config.id,
             triggered = triggered,
             isConditionMet = condition,
             message = if (triggered) {
-                "${config.symbol} 已$operator ${formatPrice(config.threshold)}；当前价格 ${formatPrice(tick.price)}"
+                "${config.name}：${config.symbol} 已$operator ${formatPrice(config.threshold)}；当前价格 ${formatPrice(tick.price)}"
             } else null
         )
     }
 
     @Synchronized
     fun reset() {
-        previousCondition = null
+        previousConditions.clear()
     }
 
     private fun formatPrice(value: Double): String =

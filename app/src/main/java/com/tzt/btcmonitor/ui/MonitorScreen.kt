@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,6 +34,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.foundation.Canvas
@@ -63,6 +65,7 @@ import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketProbeStatus
 import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
+import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
 import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.model.MonitorState
@@ -113,7 +116,7 @@ fun MonitorApp(
                 TopAppBar(
                     title = {
                         Column {
-                            Text("BTC Monitor", fontWeight = FontWeight.Bold)
+                            Text("Monitor", fontWeight = FontWeight.Bold)
                             Text("v${viewModel.versionName}", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -144,16 +147,23 @@ fun MonitorApp(
                         onStart = { runWithNotificationPermission(viewModel::startMonitoring) },
                         onStop = viewModel::stopMonitoring,
                         onTest = { runWithNotificationPermission(viewModel::sendTestNotification) },
-                        onSaveAlert = { enabled, direction, threshold ->
-                            viewModel.saveAlert(enabled, direction, threshold) { message = it }
+                        onAddAlert = { name, enabled, direction, threshold ->
+                            viewModel.addAlert(name, enabled, direction, threshold) { message = it }
+                        },
+                        onUpdateAlert = { alert, name, enabled, direction, threshold ->
+                            viewModel.updateAlert(alert, name, enabled, direction, threshold) { message = it }
+                        },
+                        onSetAlertEnabled = { alert, enabled ->
+                            viewModel.setAlertEnabled(alert, enabled) { message = it }
+                        },
+                        onDeleteAlert = { alert ->
+                            viewModel.deleteAlert(alert) { message = it }
                         }
                     )
                     1 -> CandlePanel(
                         state = candleChart,
                         currentPrice = monitor.currentPrice,
-                        alertEnabled = settings.alert.enabled,
-                        alertDirection = settings.alert.direction,
-                        alertPrice = settings.alert.threshold,
+                        alerts = settings.alerts,
                         onTimeframe = viewModel::loadCandles,
                         onRefresh = { viewModel.loadCandles(candleChart.timeframe) }
                     )
@@ -192,50 +202,24 @@ private fun MonitorPanel(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onTest: () -> Unit,
-    onSaveAlert: (Boolean, AlertDirection, String) -> Unit
+    onAddAlert: (String, Boolean, AlertDirection, String) -> Unit,
+    onUpdateAlert: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
+    onSetAlertEnabled: (AlertConfig, Boolean) -> Unit,
+    onDeleteAlert: (AlertConfig) -> Unit
 ) {
-    var enabled by remember { mutableStateOf(settings.alert.enabled) }
-    var direction by remember { mutableStateOf(settings.alert.direction) }
-    var threshold by remember { mutableStateOf(settings.alert.threshold.toString()) }
-    LaunchedEffect(settings.alert) {
-        enabled = settings.alert.enabled
-        direction = settings.alert.direction
-        threshold = settings.alert.threshold.toString()
-    }
-
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         StatusCard(monitor)
 
-        SectionCard("价格提醒") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("启用策略", modifier = Modifier.weight(1f))
-                Switch(checked = enabled, onCheckedChange = { enabled = it })
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (direction == AlertDirection.ABOVE_OR_EQUAL) {
-                    Button(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }) { Text("Price Above") }
-                    OutlinedButton(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }) { Text("Price Below") }
-                } else {
-                    OutlinedButton(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }) { Text("Price Above") }
-                    Button(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }) { Text("Price Below") }
-                }
-            }
-            OutlinedTextField(
-                value = threshold,
-                onValueChange = { threshold = it },
-                label = { Text("提醒价格 USDT") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = { onSaveAlert(enabled, direction, threshold) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("保存提醒设置") }
-        }
+        AlertListCard(
+            alerts = settings.alerts,
+            onAdd = onAddAlert,
+            onUpdate = onUpdateAlert,
+            onSetEnabled = onSetAlertEnabled,
+            onDelete = onDeleteAlert
+        )
 
         SectionCard("监控控制") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -258,12 +242,151 @@ private fun MonitorPanel(
 }
 
 @Composable
+private fun AlertListCard(
+    alerts: List<AlertConfig>,
+    onAdd: (String, Boolean, AlertDirection, String) -> Unit,
+    onUpdate: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
+    onSetEnabled: (AlertConfig, Boolean) -> Unit,
+    onDelete: (AlertConfig) -> Unit
+) {
+    var editorVisible by remember { mutableStateOf(false) }
+    var editingAlert by remember { mutableStateOf<AlertConfig?>(null) }
+    var pendingDelete by remember { mutableStateOf<AlertConfig?>(null) }
+
+    SectionCard("价格提醒列表（${alerts.size}）") {
+        Text(
+            "每条提醒独立触发；条件持续满足时不会重复通知，回到未满足后再次越过才会重新提醒。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (alerts.isEmpty()) {
+            Text("暂无提醒。点击下方按钮添加。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        alerts.forEach { alert ->
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(alert.name, fontWeight = FontWeight.SemiBold)
+                            val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
+                            Text("${alert.symbol} $symbol ${priceText(alert.threshold)} USDT")
+                        }
+                        Switch(checked = alert.enabled, onCheckedChange = { onSetEnabled(alert, it) })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            editingAlert = alert
+                            editorVisible = true
+                        }) { Text("编辑") }
+                        TextButton(onClick = { pendingDelete = alert }) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+        if (editorVisible) {
+            AlertEditor(
+                initial = editingAlert,
+                onCancel = {
+                    editorVisible = false
+                    editingAlert = null
+                },
+                onSave = { name, enabled, direction, threshold ->
+                    val current = editingAlert
+                    if (current == null) onAdd(name, enabled, direction, threshold)
+                    else onUpdate(current, name, enabled, direction, threshold)
+                    editorVisible = false
+                    editingAlert = null
+                }
+            )
+        } else {
+            Button(
+                onClick = {
+                    editingAlert = null
+                    editorVisible = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("新增提醒") }
+        }
+    }
+
+    pendingDelete?.let { alert ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除提醒？") },
+            text = { Text("将删除“${alert.name}”，此操作无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(alert)
+                    pendingDelete = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AlertEditor(
+    initial: AlertConfig?,
+    onCancel: () -> Unit,
+    onSave: (String, Boolean, AlertDirection, String) -> Unit
+) {
+    var name by remember(initial?.id) { mutableStateOf(initial?.name ?: "BTC 价格提醒") }
+    var enabled by remember(initial?.id) { mutableStateOf(initial?.enabled ?: true) }
+    var direction by remember(initial?.id) { mutableStateOf(initial?.direction ?: AlertDirection.ABOVE_OR_EQUAL) }
+    var threshold by remember(initial?.id) { mutableStateOf(initial?.threshold?.toString() ?: "") }
+
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (initial == null) "新增提醒" else "编辑提醒", fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(40) },
+                label = { Text("提醒名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("启用", modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (direction == AlertDirection.ABOVE_OR_EQUAL) {
+                    Button(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Above") }
+                    OutlinedButton(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Below") }
+                } else {
+                    OutlinedButton(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Above") }
+                    Button(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Below") }
+                }
+            }
+            OutlinedTextField(
+                value = threshold,
+                onValueChange = { threshold = it },
+                label = { Text("提醒价格 USDT") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+                Button(
+                    onClick = { onSave(name, enabled, direction, threshold) },
+                    enabled = name.isNotBlank() && threshold.toDoubleOrNull()?.let { it > 0.0 } == true,
+                    modifier = Modifier.weight(1f)
+                ) { Text("保存") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CandlePanel(
     state: CandleChartUiState,
     currentPrice: Double?,
-    alertEnabled: Boolean,
-    alertDirection: AlertDirection,
-    alertPrice: Double,
+    alerts: List<AlertConfig>,
     onTimeframe: (CandleTimeframe) -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -310,9 +433,7 @@ private fun CandlePanel(
                 CandlestickChart(
                     candles = state.candles,
                     currentPrice = currentPrice,
-                    alertEnabled = alertEnabled,
-                    alertDirection = alertDirection,
-                    alertPrice = alertPrice,
+                    alerts = alerts,
                     timeframe = state.timeframe
                 )
                 Text(
@@ -333,9 +454,7 @@ private fun CandlePanel(
 private fun CandlestickChart(
     candles: List<MarketCandle>,
     currentPrice: Double?,
-    alertEnabled: Boolean,
-    alertDirection: AlertDirection,
-    alertPrice: Double,
+    alerts: List<AlertConfig>,
     timeframe: CandleTimeframe
 ) {
     val visible = candles.takeLast(60).mapIndexed { index, candle ->
@@ -348,7 +467,10 @@ private fun CandlestickChart(
     val rawRange = (candleHigh - candleLow).coerceAtLeast(candleHigh * 0.001)
     val minPrice = candleLow - rawRange * 0.08
     val maxPrice = candleHigh + rawRange * 0.08
-    val alertInChart = alertEnabled && alertPrice in minPrice..maxPrice
+    val enabledAlerts = alerts.filter { it.enabled && it.symbol == "BTC-USDT" }
+    val alertsInChart = enabledAlerts.filter { it.threshold in minPrice..maxPrice }
+    val alertsAboveChart = enabledAlerts.filter { it.threshold > maxPrice }
+    val alertsBelowChart = enabledAlerts.filter { it.threshold < minPrice }
     val upColor = Color(0xFF39D98A)
     val downColor = Color(0xFFFF5C5C)
     val currentColor = Color(0xFF63B3ED)
@@ -411,8 +533,8 @@ private fun CandlestickChart(
             )
         }
 
-        if (alertInChart) {
-            val y = priceY(alertPrice)
+        alertsInChart.forEach { alert ->
+            val y = priceY(alert.threshold)
             drawLine(
                 alertColor,
                 Offset(left, y),
@@ -422,16 +544,30 @@ private fun CandlestickChart(
             )
             labelPaint.color = alertColor.toArgb()
             labelPaint.textSize = 10.sp.toPx()
-            drawContext.canvas.nativeCanvas.drawText("警报 ${priceText(alertPrice)}", left + 4.dp.toPx(), y - 4.dp.toPx(), labelPaint)
-        } else if (alertEnabled) {
-            val above = alertPrice > maxPrice
-            val marker = if (above) "警报↑ ${priceText(alertPrice)}（图外）" else "警报↓ ${priceText(alertPrice)}（图外）"
+            drawContext.canvas.nativeCanvas.drawText(
+                "${alert.name} ${priceText(alert.threshold)}",
+                left + 4.dp.toPx(),
+                y - 4.dp.toPx(),
+                labelPaint
+            )
+        }
+        alertsAboveChart.forEachIndexed { index, alert ->
             labelPaint.color = alertColor.toArgb()
             labelPaint.textSize = 10.sp.toPx()
             drawContext.canvas.nativeCanvas.drawText(
-                marker,
+                "警报↑ ${alert.name} ${priceText(alert.threshold)}（图外）",
                 left + 4.dp.toPx(),
-                if (above) top - 8.dp.toPx() else top + plotHeight + 18.dp.toPx(),
+                top - 8.dp.toPx() + index * 11.dp.toPx(),
+                labelPaint
+            )
+        }
+        alertsBelowChart.forEachIndexed { index, alert ->
+            labelPaint.color = alertColor.toArgb()
+            labelPaint.textSize = 10.sp.toPx()
+            drawContext.canvas.nativeCanvas.drawText(
+                "警报↓ ${alert.name} ${priceText(alert.threshold)}（图外）",
+                left + 4.dp.toPx(),
+                top + plotHeight + 18.dp.toPx() - index * 11.dp.toPx(),
                 labelPaint
             )
         }
@@ -449,11 +585,13 @@ private fun CandlestickChart(
         drawContext.canvas.nativeCanvas.drawText(endLabel, left + plotWidth, size.height - 5.dp.toPx(), labelPaint)
     }
 
-    if (alertEnabled) {
-        val symbol = if (alertDirection == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
-        Text("当前警报：BTC-USDT $symbol ${priceText(alertPrice)} USDT", color = alertColor)
+    if (enabledAlerts.isNotEmpty()) {
+        enabledAlerts.forEach { alert ->
+            val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
+            Text("${alert.name}：BTC-USDT $symbol ${priceText(alert.threshold)} USDT", color = alertColor)
+        }
     } else {
-        Text("价格警报当前未启用", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("没有已启用的价格提醒", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

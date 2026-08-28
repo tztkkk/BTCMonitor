@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BTCMonitor"
+rootProject.name = "Monitor"
 include(":app")

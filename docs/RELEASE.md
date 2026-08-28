@@ -71,7 +71,7 @@ git push origin v0.1.1
 `.github/workflows/release.yml` 会：checkout、安装 JDK 17、配置 Gradle、验证 tag/versionName、恢复 keystore、运行测试、构建签名 Release、用 apksigner 验证、生成 SHA-256、创建 GitHub Release，并上传：
 
 ```text
-BTCMonitor-v0.1.1.apk
+Monitor-v0.1.1.apk
 SHA256SUMS.txt
 ```
 

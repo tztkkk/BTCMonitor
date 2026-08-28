@@ -83,7 +83,7 @@ class NotificationHelper(
     }
 
     fun sendTradingAlert(message: String, currentPrice: Double, test: Boolean = false) {
-        val title = if (test) "BTC 测试提醒" else "BTC 监控提醒"
+        val title = if (test) "Monitor 测试提醒" else "Monitor 价格提醒"
         val body = "$message\n当前价格：${formatPrice(currentPrice)}\n时间：${timeFormatter.format(Instant.now())}"
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)

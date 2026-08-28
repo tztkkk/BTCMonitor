@@ -104,7 +104,7 @@ git push origin v0.1.1
 GitHub Actions 会自动执行测试、R8、签名验证和 SHA-256 计算，并在 Releases 中生成：
 
 ```text
-BTCMonitor-v0.1.1.apk
+Monitor-v0.1.1.apk
 SHA256SUMS.txt
 ```
 

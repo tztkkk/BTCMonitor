@@ -27,12 +27,17 @@ class DiagnosticsManager(
     suspend fun createShareIntent(): Intent = withContext(Dispatchers.IO) {
         val directory = File(context.cacheDir, "diagnostics").apply { mkdirs() }
         directory.listFiles()
-            ?.filter { it.isFile && it.name.startsWith("BTCMonitor-diagnostics-") }
+            ?.filter {
+                it.isFile && (
+                    it.name.startsWith("Monitor-diagnostics-") ||
+                        it.name.startsWith("BTCMonitor-diagnostics-")
+                    )
+            }
             ?.sortedByDescending { it.lastModified() }
             ?.drop(MAX_RETAINED_EXPORTS - 1)
             ?.forEach { it.delete() }
 
-        val fileName = "BTCMonitor-diagnostics-${FILE_TIME_FORMAT.format(Instant.now())}.txt"
+        val fileName = "Monitor-diagnostics-${FILE_TIME_FORMAT.format(Instant.now())}.txt"
         val reportFile = File(directory, fileName)
         reportFile.writeText(buildReport(logs.entries.value))
         val uri = FileProvider.getUriForFile(
@@ -42,13 +47,13 @@ class DiagnosticsManager(
         )
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "BTC Monitor diagnostics ${BuildConfig.VERSION_NAME}")
-            putExtra(Intent.EXTRA_TEXT, "BTC Monitor 诊断日志。提交前请检查是否包含不希望公开的信息。")
+            putExtra(Intent.EXTRA_SUBJECT, "Monitor diagnostics ${BuildConfig.VERSION_NAME}")
+            putExtra(Intent.EXTRA_TEXT, "Monitor 诊断日志。提交前请检查是否包含不希望公开的信息。")
             putExtra(Intent.EXTRA_STREAM, uri)
             clipData = ClipData.newUri(context.contentResolver, fileName, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        Intent.createChooser(sendIntent, "分享 BTC Monitor 日志")
+        Intent.createChooser(sendIntent, "分享 Monitor 日志")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
@@ -87,7 +92,7 @@ class DiagnosticsManager(
     }
 
     private fun buildReport(entries: List<LogEntry>): String = buildString {
-        appendLine("BTC Monitor diagnostic report")
+        appendLine("Monitor diagnostic report")
         appendLine("Generated: ${Instant.now()}")
         appendLine("Privacy: review this file before publishing it to a public repository.")
         appendLine()

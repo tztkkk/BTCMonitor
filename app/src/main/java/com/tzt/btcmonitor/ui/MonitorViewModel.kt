@@ -9,6 +9,7 @@ import com.tzt.btcmonitor.BuildConfig
 import com.tzt.btcmonitor.market.MarketDataProbe
 import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
+import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
 import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.service.MarketMonitorService
@@ -132,16 +133,44 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun saveAlert(enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
+    fun addAlert(name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
         val threshold = thresholdText.toDoubleOrNull()
         if (threshold == null || threshold <= 0.0) {
             onResult("请输入有效的正数价格")
             return
         }
         viewModelScope.launch {
-            runCatching { AppContainer.settings.saveAlert(enabled, direction, threshold) }
-                .onSuccess { onResult("提醒设置已保存") }
+            runCatching { AppContainer.settings.addAlert(name, enabled, direction, threshold) }
+                .onSuccess { onResult("提醒已添加") }
                 .onFailure { onResult("保存失败：${it.message}") }
+        }
+    }
+
+    fun updateAlert(alert: AlertConfig, name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
+        val threshold = thresholdText.toDoubleOrNull()
+        if (threshold == null || threshold <= 0.0) {
+            onResult("请输入有效的正数价格")
+            return
+        }
+        viewModelScope.launch {
+            runCatching { AppContainer.settings.updateAlert(alert.id, name, enabled, direction, threshold) }
+                .onSuccess { onResult("提醒已更新") }
+                .onFailure { onResult("保存失败：${it.message}") }
+        }
+    }
+
+    fun setAlertEnabled(alert: AlertConfig, enabled: Boolean, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { AppContainer.settings.setAlertEnabled(alert.id, enabled) }
+                .onFailure { onResult("修改失败：${it.message}") }
+        }
+    }
+
+    fun deleteAlert(alert: AlertConfig, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { AppContainer.settings.deleteAlert(alert.id) }
+                .onSuccess { onResult("提醒已删除") }
+                .onFailure { onResult("删除失败：${it.message}") }
         }
     }
 

@@ -41,14 +41,15 @@ class MarketMonitorService : Service() {
                 AppContainer.monitorState.update {
                     it.copy(currentPrice = tick.price, lastTickMillis = tick.receivedTimeMillis)
                 }
-                val result = strategyEngine.evaluate(tick)
-                AppContainer.monitorState.update { it.copy(lastStrategyMillis = result.evaluatedAtMillis) }
-                if (result.triggered && result.message != null) {
-                    AppContainer.logs.log("StrategyTriggered", result.message)
+                val results = strategyEngine.evaluate(tick)
+                AppContainer.monitorState.update { it.copy(lastStrategyMillis = System.currentTimeMillis()) }
+                results.filter { it.triggered && it.message != null }.forEach { result ->
+                    val message = requireNotNull(result.message)
+                    AppContainer.logs.log("StrategyTriggered", "alertId=${result.alertId} $message")
                     runCatching {
-                        AppContainer.notifications.sendTradingAlert(result.message, tick.price)
-                    }.onFailure {
-                        AppContainer.logs.log("Exception", "Alert send: ${it.message}", LogLevel.ERROR)
+                        AppContainer.notifications.sendTradingAlert(message, tick.price)
+                    }.onFailure { error ->
+                        AppContainer.logs.log("Exception", "Alert send: ${error.message}", LogLevel.ERROR)
                     }
                 }
             }
@@ -60,7 +61,7 @@ class MarketMonitorService : Service() {
         }
         serviceScope.launch {
             AppContainer.settings.settings.collectLatest { settings ->
-                strategyEngine.updateConfig(settings.alert)
+                strategyEngine.updateConfigs(settings.alerts)
             }
         }
     }
