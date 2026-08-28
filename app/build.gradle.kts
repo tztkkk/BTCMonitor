@@ -31,8 +31,8 @@ android {
         applicationId = "com.tzt.btcmonitor"
         minSdk = 36
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
 
         buildConfigField("String", "GITHUB_OWNER", "\"tztkkk\"")
         buildConfigField("String", "GITHUB_REPO", "\"BTCMonitor\"")
@@ -105,6 +105,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

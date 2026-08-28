@@ -8,6 +8,7 @@
 - Android 16 only：`minSdk = compileSdk = targetSdk = 36`
 - Kotlin + Jetpack Compose + Coroutines
 - OKX 公共 WebSocket：`tickers / BTC-USDT`（官方 8443、标准 443、AWS 8443 自动轮换；本地最多每秒分发一次）
+- OKX 公共 REST K 线：`1m / 5m / 15m / 1H / 4H / 1D`，Compose Canvas 本地绘制当前价和提醒价
 - OkHttp WebSocket，20 秒 ping，1/2/5/10/30 秒退避重连
 - 独立“行情获取测试”，逐端点验证握手、订阅、首个 Tick、价格、耗时和底层错误，不启动 Service 或策略
 - DataStore 配置，前台服务，两个通知通道
@@ -18,6 +19,7 @@
 
 ```text
 Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager / MarketDataProbe
+                      │            └── CandleRepository ──> OKX public REST
                       │
                       └──用户点击──> MarketMonitorService (specialUse FGS)
                                          ├── NetworkMonitor
@@ -27,7 +29,7 @@ Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager / MarketDa
                                          └── MonitorStateStore / LogManager
 ```
 
-WebSocket 不在 Activity 中。Service 只编排生命周期；连接与退避在 `MarketDataManager`，前台独立诊断在 `MarketDataProbe`，网络切换在 `NetworkMonitor`，状态变化触发在 `StrategyEngine`，通知和更新也各自独立。以后添加指标时，可以从 MarketTick/K 线聚合层进入 StrategyEngine，而不需要改 Service 的通知逻辑。
+WebSocket 不在 Activity 中。Service 只编排生命周期；连接与退避在 `MarketDataManager`，K 线历史数据在独立的 `CandleRepository`，前台诊断在 `MarketDataProbe`，网络切换在 `NetworkMonitor`，状态变化触发在 `StrategyEngine`，通知和更新也各自独立。图表请求失败不会停止后台监控。以后添加指标时，可以从 MarketTick/K 线聚合层进入 StrategyEngine，而不需要改 Service 的通知逻辑。
 
 ### 为什么是 `specialUse`
 
@@ -48,7 +50,7 @@ app/src/main/java/com/tzt/btcmonitor/
 ├── AppContainer.kt
 ├── ui/                  # Compose 页面和 ViewModel
 ├── service/             # MarketMonitorService
-├── market/              # OKX WebSocket、订阅、心跳、解析、重连
+├── market/              # OKX WebSocket、K 线 REST、订阅、心跳、解析、重连
 ├── network/             # ConnectivityManager.NetworkCallback
 ├── strategy/            # 独立边沿触发策略
 ├── notification/        # FGS 与交易提醒通道
@@ -86,8 +88,9 @@ Debug 包使用 `com.tzt.btcmonitor.debug`，因此能与正式包并存。正�
 2. 设置提醒方向和价格，点击“保存提醒设置”。
 3. 点击“测试通知”，单独确认声音、振动、锁屏和 Heads-up。用户可在系统通知设置中改变通道重要性，因此 App 不能强制 Heads-up。
 4. 点击“开始监控”。确认常驻通知、WebSocket“已连接”和最后行情更新时间。
-5. “调试日志”页查看连接、网络、重连、策略和通知事件。
-6. 更新和日志 Issue 默认使用公开仓库 `tztkkk/BTCMonitor`；如需迁移，可在“设置”页修改 owner/repo。
+5. 打开“K线”页，选择周期；橙色虚线是已保存的提醒价格，蓝线是 WebSocket 当前价格。提醒价远离可见行情时会显示“图外”，避免压缩 K 线。
+6. “日志”页查看连接、网络、重连、策略和通知事件。
+7. 行情端点测试、版本更新和仓库设置集中在“更多”页。更新和日志 Issue 默认使用公开仓库 `tztkkk/BTCMonitor`。
 
 策略严格按状态变化触发。Service 启动或修改策略后的第一条 Tick 只建立条件基线；只有观测到“不满足 → 满足”才通知。满足期间不重复；回到不满足后再次跨越才再次通知。
 
@@ -105,7 +108,7 @@ Foreground Service 提高存活优先级，但不是“永久在线”保证：
 
 ## 数据与安全
 
-- 行情来自 OKX 公共 WebSocket，无 API Key；应用中没有下单接口。
+- 实时行情来自 OKX 公共 WebSocket，K 线来自 OKX 公共 REST，无 API Key；应用中没有下单接口。
 - 策略设置只在 DataStore，本地日志位于 App 私有目录。
 - App 不包含 GitHub PAT。更新仓库必须公开，或由另一个公开仓库仅发布 APK/checksum。
 - “GitHub 日志”会打开预填 Issue，由用户检查后提交；应用不会在后台静默上传运行数据。

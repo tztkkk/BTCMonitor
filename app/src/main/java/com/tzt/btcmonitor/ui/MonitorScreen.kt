@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,6 +35,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,17 +46,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tzt.btcmonitor.logging.LogEntry
 import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketProbeStatus
 import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
+import com.tzt.btcmonitor.model.CandleTimeframe
+import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.model.MonitorState
 import com.tzt.btcmonitor.model.NetworkType
 import com.tzt.btcmonitor.model.WebSocketStatus
@@ -88,8 +98,14 @@ fun MonitorApp(
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val update by viewModel.updateState.collectAsStateWithLifecycle()
     val marketProbe by viewModel.marketProbeState.collectAsStateWithLifecycle()
+    val candleChart by viewModel.candleState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 1 && candleChart.candles.isEmpty() && !candleChart.loading) {
+            viewModel.loadCandles()
+        }
+    }
 
     MaterialTheme(colorScheme = AppColors) {
         Scaffold(
@@ -106,7 +122,7 @@ fun MonitorApp(
         ) { outerPadding ->
             Column(Modifier.fillMaxSize().padding(outerPadding)) {
                 PrimaryTabRow(selectedTabIndex = selectedTab) {
-                    listOf("监控", "调试日志", "设置").forEachIndexed { index, label ->
+                    listOf("监控", "K线", "日志", "更多").forEachIndexed { index, label ->
                         Tab(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
@@ -125,20 +141,23 @@ fun MonitorApp(
                     0 -> MonitorPanel(
                         monitor = monitor,
                         settings = settings,
-                        update = update,
-                        marketProbe = marketProbe,
                         onStart = { runWithNotificationPermission(viewModel::startMonitoring) },
                         onStop = viewModel::stopMonitoring,
                         onTest = { runWithNotificationPermission(viewModel::sendTestNotification) },
-                        onTestMarketData = viewModel::testMarketData,
                         onSaveAlert = { enabled, direction, threshold ->
                             viewModel.saveAlert(enabled, direction, threshold) { message = it }
-                        },
-                        onCheckUpdate = viewModel::checkForUpdates,
-                        onDownloadUpdate = viewModel::downloadUpdate,
-                        onOpenUnknownSources = openUnknownSourcesSettings
+                        }
                     )
-                    1 -> LogPanel(
+                    1 -> CandlePanel(
+                        state = candleChart,
+                        currentPrice = monitor.currentPrice,
+                        alertEnabled = settings.alert.enabled,
+                        alertDirection = settings.alert.direction,
+                        alertPrice = settings.alert.threshold,
+                        onTimeframe = viewModel::loadCandles,
+                        onRefresh = { viewModel.loadCandles(candleChart.timeframe) }
+                    )
+                    2 -> LogPanel(
                         logs = logs,
                         repositoryConfigured = settings.githubOwner.isNotBlank() && settings.githubRepo.isNotBlank(),
                         onShare = {
@@ -148,9 +167,18 @@ fun MonitorApp(
                             viewModel.openGitHubDiagnosticsIssue(launchExternalIntent) { message = it }
                         }
                     )
-                    else -> SettingsPanel(settings) { owner, repo ->
-                        viewModel.saveRepository(owner, repo) { message = it }
-                    }
+                    else -> MorePanel(
+                        settings = settings,
+                        update = update,
+                        marketProbe = marketProbe,
+                        onTestMarketData = viewModel::testMarketData,
+                        onCheckUpdate = viewModel::checkForUpdates,
+                        onDownloadUpdate = viewModel::downloadUpdate,
+                        onOpenUnknownSources = openUnknownSourcesSettings,
+                        onSaveRepository = { owner, repo ->
+                            viewModel.saveRepository(owner, repo) { message = it }
+                        }
+                    )
                 }
             }
         }
@@ -161,16 +189,10 @@ fun MonitorApp(
 private fun MonitorPanel(
     monitor: MonitorState,
     settings: AppSettings,
-    update: UpdateUiState,
-    marketProbe: MarketProbeUiState,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onTest: () -> Unit,
-    onTestMarketData: () -> Unit,
-    onSaveAlert: (Boolean, AlertDirection, String) -> Unit,
-    onCheckUpdate: () -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onOpenUnknownSources: () -> Unit
+    onSaveAlert: (Boolean, AlertDirection, String) -> Unit
 ) {
     var enabled by remember { mutableStateOf(settings.alert.enabled) }
     var direction by remember { mutableStateOf(settings.alert.direction) }
@@ -231,10 +253,207 @@ private fun MonitorPanel(
             )
         }
 
-        MarketProbeCard(marketProbe, onTestMarketData)
-
-        UpdateCard(update, onCheckUpdate, onDownloadUpdate, onOpenUnknownSources)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CandlePanel(
+    state: CandleChartUiState,
+    currentPrice: Double?,
+    alertEnabled: Boolean,
+    alertDirection: AlertDirection,
+    alertPrice: Double,
+    onTimeframe: (CandleTimeframe) -> Unit,
+    onRefresh: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SectionCard("BTC-USDT K 线") {
+            Text(
+                "OKX 公共行情 · 仅用于监控，不含交易功能",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                CandleTimeframe.entries.forEach { timeframe ->
+                    if (timeframe == state.timeframe) {
+                        Button(
+                            onClick = { onTimeframe(timeframe) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 2.dp)
+                        ) { Text(timeframe.label, fontSize = 11.sp) }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onTimeframe(timeframe) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 2.dp)
+                        ) { Text(timeframe.label, fontSize = 11.sp) }
+                    }
+                }
+            }
+
+            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            state.error?.let {
+                Text("K 线加载失败：$it", color = MaterialTheme.colorScheme.error)
+                Text("这不会影响 Foreground Service；可检查 VPN/网络后重试。", style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.candles.isNotEmpty()) {
+                val newest = state.candles.last().withLivePrice(currentPrice)
+                StatusLine("最新", formatCandleTime(newest.openTimeMillis, state.timeframe))
+                StatusLine("O / H", "${priceText(newest.open)} / ${priceText(newest.high)}")
+                StatusLine("L / C", "${priceText(newest.low)} / ${priceText(newest.close)}")
+                CandlestickChart(
+                    candles = state.candles,
+                    currentPrice = currentPrice,
+                    alertEnabled = alertEnabled,
+                    alertDirection = alertDirection,
+                    alertPrice = alertPrice,
+                    timeframe = state.timeframe
+                )
+                Text(
+                    "绿色上涨，红色下跌；蓝线为当前价，橙色虚线为已保存的提醒价。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                state.loadedAtMillis?.let { StatusLine("数据加载", timeOrDash(it)) }
+            }
+            OutlinedButton(onClick = onRefresh, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
+                Text("刷新 K 线")
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun CandlestickChart(
+    candles: List<MarketCandle>,
+    currentPrice: Double?,
+    alertEnabled: Boolean,
+    alertDirection: AlertDirection,
+    alertPrice: Double,
+    timeframe: CandleTimeframe
+) {
+    val visible = candles.takeLast(60).mapIndexed { index, candle ->
+        if (index == candles.takeLast(60).lastIndex) candle.withLivePrice(currentPrice) else candle
+    }
+    if (visible.isEmpty()) return
+
+    val candleLow = visible.minOf(MarketCandle::low)
+    val candleHigh = visible.maxOf(MarketCandle::high)
+    val rawRange = (candleHigh - candleLow).coerceAtLeast(candleHigh * 0.001)
+    val minPrice = candleLow - rawRange * 0.08
+    val maxPrice = candleHigh + rawRange * 0.08
+    val alertInChart = alertEnabled && alertPrice in minPrice..maxPrice
+    val upColor = Color(0xFF39D98A)
+    val downColor = Color(0xFFFF5C5C)
+    val currentColor = Color(0xFF63B3ED)
+    val alertColor = Color(0xFFF6AD55)
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(390.dp)
+            .background(Color(0xFF0D1524))
+    ) {
+        val left = 8.dp.toPx()
+        val right = 70.dp.toPx()
+        val top = 26.dp.toPx()
+        val bottom = 28.dp.toPx()
+        val plotWidth = size.width - left - right
+        val plotHeight = size.height - top - bottom
+        val priceRange = maxPrice - minPrice
+        fun priceY(price: Double): Float =
+            top + ((maxPrice - price) / priceRange * plotHeight).toFloat()
+
+        val labelPaint = android.graphics.Paint().apply {
+            color = labelColor.toArgb()
+            textSize = 10.sp.toPx()
+            isAntiAlias = true
+        }
+        repeat(5) { index ->
+            val ratio = index / 4f
+            val y = top + plotHeight * ratio
+            drawLine(gridColor, Offset(left, y), Offset(left + plotWidth, y), strokeWidth = 1f)
+            val price = maxPrice - priceRange * ratio
+            drawContext.canvas.nativeCanvas.drawText(priceText(price), left + plotWidth + 6.dp.toPx(), y + 4.dp.toPx(), labelPaint)
+        }
+
+        val slotWidth = plotWidth / visible.size
+        val bodyWidth = (slotWidth * 0.62f).coerceAtLeast(2f)
+        visible.forEachIndexed { index, candle ->
+            val x = left + slotWidth * (index + 0.5f)
+            val color = if (candle.close >= candle.open) upColor else downColor
+            val highY = priceY(candle.high)
+            val lowY = priceY(candle.low)
+            val openY = priceY(candle.open)
+            val closeY = priceY(candle.close)
+            drawLine(color, Offset(x, highY), Offset(x, lowY), strokeWidth = 1.2.dp.toPx())
+            val bodyTop = minOf(openY, closeY)
+            val bodyHeight = kotlin.math.abs(closeY - openY).coerceAtLeast(1.5.dp.toPx())
+            drawRect(color, Offset(x - bodyWidth / 2f, bodyTop), Size(bodyWidth, bodyHeight))
+        }
+
+        currentPrice?.takeIf { it in minPrice..maxPrice }?.let { price ->
+            val y = priceY(price)
+            drawLine(
+                currentColor,
+                Offset(left, y),
+                Offset(left + plotWidth, y),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
+            )
+        }
+
+        if (alertInChart) {
+            val y = priceY(alertPrice)
+            drawLine(
+                alertColor,
+                Offset(left, y),
+                Offset(left + plotWidth, y),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 4.dp.toPx()))
+            )
+            labelPaint.color = alertColor.toArgb()
+            labelPaint.textSize = 10.sp.toPx()
+            drawContext.canvas.nativeCanvas.drawText("警报 ${priceText(alertPrice)}", left + 4.dp.toPx(), y - 4.dp.toPx(), labelPaint)
+        } else if (alertEnabled) {
+            val above = alertPrice > maxPrice
+            val marker = if (above) "警报↑ ${priceText(alertPrice)}（图外）" else "警报↓ ${priceText(alertPrice)}（图外）"
+            labelPaint.color = alertColor.toArgb()
+            labelPaint.textSize = 10.sp.toPx()
+            drawContext.canvas.nativeCanvas.drawText(
+                marker,
+                left + 4.dp.toPx(),
+                if (above) top - 8.dp.toPx() else top + plotHeight + 18.dp.toPx(),
+                labelPaint
+            )
+        }
+
+        labelPaint.color = labelColor.toArgb()
+        labelPaint.textSize = 10.sp.toPx()
+        drawContext.canvas.nativeCanvas.drawText(
+            formatCandleTime(visible.first().openTimeMillis, timeframe),
+            left,
+            size.height - 5.dp.toPx(),
+            labelPaint
+        )
+        val endLabel = formatCandleTime(visible.last().openTimeMillis, timeframe)
+        labelPaint.textAlign = android.graphics.Paint.Align.RIGHT
+        drawContext.canvas.nativeCanvas.drawText(endLabel, left + plotWidth, size.height - 5.dp.toPx(), labelPaint)
+    }
+
+    if (alertEnabled) {
+        val symbol = if (alertDirection == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
+        Text("当前警报：BTC-USDT $symbol ${priceText(alertPrice)} USDT", color = alertColor)
+    } else {
+        Text("价格警报当前未启用", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -440,42 +659,59 @@ private fun LogPanel(
 }
 
 @Composable
-private fun SettingsPanel(settings: AppSettings, onSave: (String, String) -> Unit) {
+private fun MorePanel(
+    settings: AppSettings,
+    update: UpdateUiState,
+    marketProbe: MarketProbeUiState,
+    onTestMarketData: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onOpenUnknownSources: () -> Unit,
+    onSaveRepository: (String, String) -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        MarketProbeCard(marketProbe, onTestMarketData)
+        UpdateCard(update, onCheckUpdate, onDownloadUpdate, onOpenUnknownSources)
+        RepositorySettingsCard(settings, onSaveRepository)
+        SectionCard("固定配置") {
+            StatusLine("applicationId", "com.tzt.btcmonitor")
+            StatusLine("Android", "16 / API 36 only")
+            StatusLine("行情源", "OKX public API")
+            StatusLine("交易能力", "无；不含 API Key 和下单代码")
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun RepositorySettingsCard(settings: AppSettings, onSave: (String, String) -> Unit) {
     var owner by remember { mutableStateOf(settings.githubOwner) }
     var repo by remember { mutableStateOf(settings.githubRepo) }
     LaunchedEffect(settings.githubOwner, settings.githubRepo) {
         owner = settings.githubOwner
         repo = settings.githubRepo
     }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        SectionCard("GitHub Release 仓库") {
-            Text("填写公开的 Release/Issue 仓库。更新检查和日志 Issue 共用此配置，不要在 APK 中放 GitHub Token。")
-            OutlinedTextField(
-                value = owner,
-                onValueChange = { owner = it },
-                label = { Text("GitHub owner") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = repo,
-                onValueChange = { repo = it },
-                label = { Text("Release repository") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(onClick = { onSave(owner, repo) }, modifier = Modifier.fillMaxWidth()) {
-                Text("保存仓库设置")
-            }
-        }
-        SectionCard("固定配置") {
-            StatusLine("applicationId", "com.tzt.btcmonitor")
-            StatusLine("Android", "16 / API 36 only")
-            StatusLine("行情源", "OKX public WebSocket")
-            StatusLine("交易能力", "无；不含 API Key 和下单代码")
+    SectionCard("GitHub Release 仓库") {
+        Text("更新检查和日志 Issue 共用此公开仓库；APK 中不保存 GitHub Token。")
+        OutlinedTextField(
+            value = owner,
+            onValueChange = { owner = it },
+            label = { Text("GitHub owner") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = repo,
+            onValueChange = { repo = it },
+            label = { Text("Release repository") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(onClick = { onSave(owner, repo) }, modifier = Modifier.fillMaxWidth()) {
+            Text("保存仓库设置")
         }
     }
 }
@@ -516,4 +752,22 @@ private fun formatLogTime(millis: Long): String = logFormatter.format(Instant.of
 private fun runtime(millis: Long): String {
     val duration = Duration.ofMillis(millis.coerceAtLeast(0))
     return "%02d:%02d:%02d".format(duration.toHours(), duration.toMinutesPart(), duration.toSecondsPart())
+}
+
+private fun MarketCandle.withLivePrice(currentPrice: Double?): MarketCandle {
+    val price = currentPrice?.takeIf(Double::isFinite) ?: return this
+    return copy(close = price, high = maxOf(high, price), low = minOf(low, price))
+}
+
+private fun priceText(price: Double): String = when {
+    price >= 1_000 -> "%.2f".format(price)
+    price >= 1 -> "%.4f".format(price)
+    else -> "%.6f".format(price)
+}
+
+private fun formatCandleTime(millis: Long, timeframe: CandleTimeframe): String {
+    val pattern = if (timeframe == CandleTimeframe.ONE_DAY) "MM-dd" else "MM-dd HH:mm"
+    return DateTimeFormatter.ofPattern(pattern)
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.ofEpochMilli(millis))
 }

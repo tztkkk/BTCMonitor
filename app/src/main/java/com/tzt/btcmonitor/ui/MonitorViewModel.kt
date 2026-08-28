@@ -9,6 +9,8 @@ import com.tzt.btcmonitor.BuildConfig
 import com.tzt.btcmonitor.market.MarketDataProbe
 import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
+import com.tzt.btcmonitor.model.CandleTimeframe
+import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.service.MarketMonitorService
 import com.tzt.btcmonitor.settings.AppSettings
 import com.tzt.btcmonitor.update.UpdateUiState
@@ -21,15 +23,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+data class CandleChartUiState(
+    val timeframe: CandleTimeframe = CandleTimeframe.FIVE_MINUTES,
+    val candles: List<MarketCandle> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val loadedAtMillis: Long? = null
+)
+
 class MonitorViewModel(application: Application) : AndroidViewModel(application) {
     private val marketProbe = MarketDataProbe(AppContainer.logs)
     private val mutableMarketProbeState = MutableStateFlow(MarketProbeUiState())
     private var marketProbeJob: Job? = null
+    private var candleJob: Job? = null
+    private val mutableCandleState = MutableStateFlow(CandleChartUiState())
 
     val monitorState = AppContainer.monitorState.state
     val logs = AppContainer.logs.entries
     val updateState: StateFlow<UpdateUiState> = AppContainer.updates.state
     val marketProbeState: StateFlow<MarketProbeUiState> = mutableMarketProbeState.asStateFlow()
+    val candleState: StateFlow<CandleChartUiState> = mutableCandleState.asStateFlow()
     val settings: StateFlow<AppSettings> = AppContainer.settings.settings.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -91,6 +104,31 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
             } finally {
                 mutableMarketProbeState.value = mutableMarketProbeState.value.copy(running = false)
             }
+        }
+    }
+
+    fun loadCandles(timeframe: CandleTimeframe = mutableCandleState.value.timeframe) {
+        candleJob?.cancel()
+        candleJob = viewModelScope.launch {
+            mutableCandleState.value = mutableCandleState.value.copy(
+                timeframe = timeframe,
+                loading = true,
+                error = null
+            )
+            runCatching { AppContainer.candles.loadRecent(timeframe) }
+                .onSuccess { candles ->
+                    mutableCandleState.value = CandleChartUiState(
+                        timeframe = timeframe,
+                        candles = candles,
+                        loadedAtMillis = System.currentTimeMillis()
+                    )
+                }
+                .onFailure { error ->
+                    mutableCandleState.value = mutableCandleState.value.copy(
+                        loading = false,
+                        error = MarketDataProbe.exceptionDetail(error)
+                    )
+                }
         }
     }
 
