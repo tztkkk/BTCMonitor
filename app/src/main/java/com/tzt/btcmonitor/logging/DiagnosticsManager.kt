@@ -124,7 +124,7 @@ class DiagnosticsManager(
             appendLine("Service runtime ms: ${state.serviceStartedMillis?.let { System.currentTimeMillis() - it } ?: "--"}")
             appendLine("Network: ${state.networkType}")
             appendLine("WebSocket: ${state.webSocketStatus}")
-            appendLine("Current price: ${state.currentPrice ?: "--"}")
+            appendLine("Quotes: ${state.quotes.values.joinToString { "${it.symbol}=${it.price}" }.ifBlank { "--" }}")
             appendLine("Last tick: ${instantOrDash(state.lastTickMillis)}")
             appendLine("Last strategy: ${instantOrDash(state.lastStrategyMillis)}")
             appendLine("Last WebSocket connect: ${instantOrDash(state.lastWebSocketConnectMillis)}")

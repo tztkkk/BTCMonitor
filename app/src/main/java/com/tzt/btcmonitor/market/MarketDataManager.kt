@@ -41,11 +41,29 @@ class MarketDataManager(
     private var lastDispatchMillis = 0L
     private var lastMessageMillis = 0L
     private var pingSentMillis: Long? = null
+    private var symbols: Set<String> = emptySet()
 
     fun start(initialNetworkAvailable: Boolean) {
         running = true
         networkAvailable = initialNetworkAvailable
-        if (networkAvailable) connect() else onStatus(WebSocketStatus.DISCONNECTED)
+        if (networkAvailable && symbols.isNotEmpty()) connect() else onStatus(WebSocketStatus.DISCONNECTED)
+    }
+
+    fun updateSymbols(newSymbols: Set<String>) {
+        scope.launch {
+            val normalized = newSymbols.filterTo(sortedSetOf()) { it.isNotBlank() }
+            if (normalized == symbols) return@launch
+            symbols = normalized
+            logs.log("MarketSubscriptionsChanged", "symbols=${symbols.joinToString()}")
+            if (!running) return@launch
+            reconnectAttempt = 0
+            invalidateSocket()
+            if (symbols.isEmpty() || !networkAvailable) {
+                onStatus(WebSocketStatus.DISCONNECTED)
+            } else {
+                connect()
+            }
+        }
     }
 
     fun onNetworkChanged(available: Boolean) {
@@ -81,14 +99,14 @@ class MarketDataManager(
     }
 
     private fun connect() {
-        if (!running || !networkAvailable || socket != null) return
+        if (!running || !networkAvailable || socket != null || symbols.isEmpty()) return
         val myGeneration = ++generation
         val reconnecting = reconnectAttempt > 0
         val endpoint = MarketEndpoints.forAttempt(reconnectAttempt)
         onStatus(if (reconnecting) WebSocketStatus.RECONNECTING else WebSocketStatus.CONNECTING)
         logs.log(
             "WebSocketConnecting",
-            "${endpoint.label} BTC-USDT attempt=${reconnectAttempt + 1} url=${endpoint.url}"
+            "${endpoint.label} symbols=${symbols.joinToString()} attempt=${reconnectAttempt + 1} url=${endpoint.url}"
         )
 
         val request = Request.Builder()
@@ -110,7 +128,8 @@ class MarketDataManager(
                         if (wasReconnect) "ReconnectSuccess" else "WebSocketConnected",
                         "${endpoint.label} HTTP ${response.code} ${response.message}"
                     )
-                    if (!webSocket.send(SUBSCRIBE_MESSAGE)) {
+                    val subscribeMessage = OkxProtocol.monitorSubscribeMessage(symbols)
+                    if (!webSocket.send(subscribeMessage)) {
                         logs.log("WebSocketError", "OKX subscription send failed", LogLevel.ERROR)
                         webSocket.cancel()
                         return@launch
@@ -210,8 +229,11 @@ class MarketDataManager(
         if (data.length() == 0) return@runCatching null
         val ticker = data.getJSONObject(0)
         MarketTick(
-            symbol = "BTC-USDT",
+            symbol = json.optJSONObject("arg")?.optString("instId").orEmpty()
+                .ifBlank { ticker.optString("instId") }
+                .ifBlank { return@runCatching null },
             price = ticker.getString("last").toDouble(),
+            open24h = ticker.optString("open24h").toDoubleOrNull(),
             exchangeTimeMillis = ticker.optString("ts").toLongOrNull() ?: System.currentTimeMillis()
         )
     }.onFailure {
@@ -240,7 +262,6 @@ class MarketDataManager(
     }
 
     companion object {
-        private const val SUBSCRIBE_MESSAGE = OkxProtocol.MONITOR_SUBSCRIBE_MESSAGE
         private const val TICK_DISPATCH_INTERVAL_MS = 1_000L
         private const val TICK_LOG_INTERVAL_MS = 60_000L
         private const val HEARTBEAT_CHECK_INTERVAL_MS = 10_000L

@@ -14,10 +14,11 @@ class OkxProtocolTest {
     @Test
     fun subscriptionMessagesUseTheValidatedIds() {
         assertTrue(
-            OkxProtocol.MONITOR_SUBSCRIBE_MESSAGE.contains(
+            OkxProtocol.monitorSubscribeMessage(setOf("BTC-USDT", "ETH-USDT")).contains(
                 "\"id\":\"${OkxProtocol.MONITOR_REQUEST_ID}\""
             )
         )
+        assertTrue(OkxProtocol.monitorSubscribeMessage(setOf("BTC-USDT", "ETH-USDT")).contains("ETH-USDT"))
         assertTrue(
             OkxProtocol.PROBE_SUBSCRIBE_MESSAGE.contains(
                 "\"id\":\"${OkxProtocol.PROBE_REQUEST_ID}\""

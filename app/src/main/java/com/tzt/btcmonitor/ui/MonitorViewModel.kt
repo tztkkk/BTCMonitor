@@ -12,10 +12,13 @@ import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
 import com.tzt.btcmonitor.model.MarketCandle
+import com.tzt.btcmonitor.model.WatchAsset
 import com.tzt.btcmonitor.service.MarketMonitorService
 import com.tzt.btcmonitor.settings.AppSettings
 import com.tzt.btcmonitor.update.UpdateUiState
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class CandleChartUiState(
+    val symbol: String = "BTC-USDT",
     val timeframe: CandleTimeframe = CandleTimeframe.FIVE_MINUTES,
     val candles: List<MarketCandle> = emptyList(),
     val loading: Boolean = false,
@@ -37,6 +41,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     private val mutableMarketProbeState = MutableStateFlow(MarketProbeUiState())
     private var marketProbeJob: Job? = null
     private var candleJob: Job? = null
+    private var quoteSnapshotJob: Job? = null
     private val mutableCandleState = MutableStateFlow(CandleChartUiState())
 
     val monitorState = AppContainer.monitorState.state
@@ -83,7 +88,7 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         runCatching {
             AppContainer.notifications.sendTradingAlert(
                 message = "BTC-USDT 测试通知通道正常",
-                currentPrice = monitorState.value.currentPrice ?: 120_125.3,
+                currentPrice = monitorState.value.quotes.values.firstOrNull()?.price ?: 120_125.3,
                 test = true
             )
         }
@@ -108,18 +113,23 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun loadCandles(timeframe: CandleTimeframe = mutableCandleState.value.timeframe) {
+    fun loadCandles(
+        symbol: String = mutableCandleState.value.symbol,
+        timeframe: CandleTimeframe = mutableCandleState.value.timeframe
+    ) {
         candleJob?.cancel()
         candleJob = viewModelScope.launch {
             mutableCandleState.value = mutableCandleState.value.copy(
                 timeframe = timeframe,
+                symbol = symbol,
                 loading = true,
                 error = null
             )
-            runCatching { AppContainer.candles.loadRecent(timeframe) }
+            runCatching { AppContainer.candles.loadRecent(symbol, timeframe) }
                 .onSuccess { candles ->
                     mutableCandleState.value = CandleChartUiState(
                         timeframe = timeframe,
+                        symbol = symbol,
                         candles = candles,
                         loadedAtMillis = System.currentTimeMillis()
                     )
@@ -133,14 +143,14 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun addAlert(name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
+    fun addAlert(asset: WatchAsset, name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
         val threshold = thresholdText.toDoubleOrNull()
         if (threshold == null || threshold <= 0.0) {
             onResult("请输入有效的正数价格")
             return
         }
         viewModelScope.launch {
-            runCatching { AppContainer.settings.addAlert(name, enabled, direction, threshold) }
+            runCatching { AppContainer.settings.addAlert(asset, name, enabled, direction, threshold) }
                 .onSuccess { onResult("提醒已添加") }
                 .onFailure { onResult("保存失败：${it.message}") }
         }
@@ -171,6 +181,40 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
             runCatching { AppContainer.settings.deleteAlert(alert.id) }
                 .onSuccess { onResult("提醒已删除") }
                 .onFailure { onResult("删除失败：${it.message}") }
+        }
+    }
+
+    fun addAsset(asset: WatchAsset, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { AppContainer.settings.addAsset(asset) }
+                .onSuccess { onResult("已添加 ${asset.symbol}") }
+                .onFailure { onResult("添加失败：${it.message}") }
+        }
+    }
+
+    fun removeAsset(asset: WatchAsset, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { AppContainer.settings.removeAsset(asset.id) }
+                .onSuccess { onResult("已移除 ${asset.symbol}") }
+                .onFailure { onResult("移除失败：${it.message}") }
+        }
+    }
+
+    fun setMonitoringPaused(paused: Boolean) {
+        viewModelScope.launch { AppContainer.settings.setMonitoringPaused(paused) }
+    }
+
+    fun refreshQuotes(assets: List<WatchAsset>) {
+        quoteSnapshotJob?.cancel()
+        quoteSnapshotJob = viewModelScope.launch {
+            val quotes = assets.map { asset ->
+                async { runCatching { AppContainer.candles.loadQuote(asset.symbol) }.getOrNull() }
+            }.awaitAll().filterNotNull()
+            if (quotes.isNotEmpty()) {
+                AppContainer.monitorState.update { state ->
+                    state.copy(quotes = state.quotes + quotes.associateBy { it.symbol })
+                }
+            }
         }
     }
 

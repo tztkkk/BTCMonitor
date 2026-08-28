@@ -71,7 +71,7 @@ class NotificationHelper(
         return NotificationCompat.Builder(context, MONITOR_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("行情监控运行中")
-            .setContentText("BTC-USDT 正在监控")
+            .setContentText("已启用的价格提醒正在监控")
             .setContentIntent(openAppPendingIntent())
             .setOngoing(true)
             .setOnlyAlertOnce(true)

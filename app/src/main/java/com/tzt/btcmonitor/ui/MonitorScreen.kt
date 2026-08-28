@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -42,7 +43,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.BackHandler
 import com.tzt.btcmonitor.logging.LogEntry
 import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketProbeStatus
@@ -71,11 +72,11 @@ import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.model.MonitorState
 import com.tzt.btcmonitor.model.NetworkType
 import com.tzt.btcmonitor.model.WebSocketStatus
+import com.tzt.btcmonitor.model.SupportedAssets
+import com.tzt.btcmonitor.model.WatchAsset
 import com.tzt.btcmonitor.settings.AppSettings
 import com.tzt.btcmonitor.update.UpdatePhase
 import com.tzt.btcmonitor.update.UpdateUiState
-import kotlinx.coroutines.delay
-import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -103,12 +104,28 @@ fun MonitorApp(
     val marketProbe by viewModel.marketProbeState.collectAsStateWithLifecycle()
     val candleChart by viewModel.candleState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedAssetId by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf("") }
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 1 && candleChart.candles.isEmpty() && !candleChart.loading) {
-            viewModel.loadCandles()
+    val selectedAsset = settings.assets.firstOrNull { it.id == selectedAssetId }
+    val shouldMonitor = !settings.monitoringPaused && settings.alerts.any { it.enabled }
+    LaunchedEffect(shouldMonitor, monitor.serviceRunning) {
+        if (shouldMonitor && !monitor.serviceRunning) {
+            runWithNotificationPermission(viewModel::startMonitoring)
+        } else if (!shouldMonitor && monitor.serviceRunning) {
+            viewModel.stopMonitoring()
         }
     }
+    LaunchedEffect(settings.assets.map { it.id }, monitor.serviceRunning) {
+        if (!monitor.serviceRunning && settings.assets.isNotEmpty()) viewModel.refreshQuotes(settings.assets)
+    }
+    LaunchedEffect(selectedAsset?.id) {
+        selectedAsset?.let { asset ->
+            if (candleChart.symbol != asset.symbol || candleChart.candles.isEmpty()) {
+                viewModel.loadCandles(asset.symbol)
+            }
+        }
+    }
+    BackHandler(enabled = selectedAsset != null) { selectedAssetId = null }
 
     MaterialTheme(colorScheme = AppColors) {
         Scaffold(
@@ -124,13 +141,15 @@ fun MonitorApp(
             }
         ) { outerPadding ->
             Column(Modifier.fillMaxSize().padding(outerPadding)) {
-                PrimaryTabRow(selectedTabIndex = selectedTab) {
-                    listOf("监控", "K线", "日志", "更多").forEachIndexed { index, label ->
-                        Tab(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            text = { Text(label) }
-                        )
+                if (selectedAsset == null) {
+                    PrimaryTabRow(selectedTabIndex = selectedTab) {
+                        listOf("行情", "日志", "更多").forEachIndexed { index, label ->
+                            Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                text = { Text(label) }
+                            )
+                        }
                     }
                 }
                 if (message.isNotBlank()) {
@@ -140,15 +159,17 @@ fun MonitorApp(
                         color = MaterialTheme.colorScheme.secondary
                     )
                 }
-                when (selectedTab) {
-                    0 -> MonitorPanel(
+                if (selectedAsset != null) {
+                    AssetDetailPanel(
+                        asset = selectedAsset,
                         monitor = monitor,
-                        settings = settings,
-                        onStart = { runWithNotificationPermission(viewModel::startMonitoring) },
-                        onStop = viewModel::stopMonitoring,
-                        onTest = { runWithNotificationPermission(viewModel::sendTestNotification) },
+                        state = candleChart,
+                        alerts = settings.alerts.filter { it.assetId == selectedAsset.id },
+                        onBack = { selectedAssetId = null },
+                        onTimeframe = { viewModel.loadCandles(selectedAsset.symbol, it) },
+                        onRefresh = { viewModel.loadCandles(selectedAsset.symbol, candleChart.timeframe) },
                         onAddAlert = { name, enabled, direction, threshold ->
-                            viewModel.addAlert(name, enabled, direction, threshold) { message = it }
+                            viewModel.addAlert(selectedAsset, name, enabled, direction, threshold) { message = it }
                         },
                         onUpdateAlert = { alert, name, enabled, direction, threshold ->
                             viewModel.updateAlert(alert, name, enabled, direction, threshold) { message = it }
@@ -160,14 +181,17 @@ fun MonitorApp(
                             viewModel.deleteAlert(alert) { message = it }
                         }
                     )
-                    1 -> CandlePanel(
-                        state = candleChart,
-                        currentPrice = monitor.currentPrice,
-                        alerts = settings.alerts,
-                        onTimeframe = viewModel::loadCandles,
-                        onRefresh = { viewModel.loadCandles(candleChart.timeframe) }
+                } else when (selectedTab) {
+                    0 -> MarketListPanel(
+                        monitor = monitor,
+                        settings = settings,
+                        onOpenAsset = { selectedAssetId = it.id },
+                        onAddAsset = { viewModel.addAsset(it) { result -> message = result } },
+                        onRemoveAsset = { viewModel.removeAsset(it) { result -> message = result } },
+                        onSetPaused = viewModel::setMonitoringPaused,
+                        onRefreshQuotes = { viewModel.refreshQuotes(settings.assets) }
                     )
-                    2 -> LogPanel(
+                    1 -> LogPanel(
                         logs = logs,
                         repositoryConfigured = settings.githubOwner.isNotBlank() && settings.githubRepo.isNotBlank(),
                         onShare = {
@@ -185,6 +209,7 @@ fun MonitorApp(
                         onCheckUpdate = viewModel::checkForUpdates,
                         onDownloadUpdate = viewModel::downloadUpdate,
                         onOpenUnknownSources = openUnknownSourcesSettings,
+                        onTestNotification = { runWithNotificationPermission(viewModel::sendTestNotification) },
                         onSaveRepository = { owner, repo ->
                             viewModel.saveRepository(owner, repo) { message = it }
                         }
@@ -196,54 +221,193 @@ fun MonitorApp(
 }
 
 @Composable
-private fun MonitorPanel(
+private fun MarketListPanel(
     monitor: MonitorState,
     settings: AppSettings,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onTest: () -> Unit,
+    onOpenAsset: (WatchAsset) -> Unit,
+    onAddAsset: (WatchAsset) -> Unit,
+    onRemoveAsset: (WatchAsset) -> Unit,
+    onSetPaused: (Boolean) -> Unit,
+    onRefreshQuotes: () -> Unit
+) {
+    var addDialogVisible by remember { mutableStateOf(false) }
+    var pendingRemove by remember { mutableStateOf<WatchAsset?>(null) }
+    val enabledAlerts = settings.alerts.count { it.enabled }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SectionCard("监控状态") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            settings.monitoringPaused -> "全部监控已暂停"
+                            enabledAlerts == 0 -> "没有启用的提醒"
+                            monitor.serviceRunning -> "自动监控运行中"
+                            else -> "正在启动监控"
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text("${settings.assets.size} 个标的 · $enabledAlerts 条启用提醒", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(
+                    checked = !settings.monitoringPaused,
+                    onCheckedChange = { onSetPaused(!it) }
+                )
+            }
+            StatusLine("Service", if (monitor.serviceRunning) "运行中" else "已停止")
+            StatusLine("WebSocket", webSocketText(monitor.webSocketStatus))
+            StatusLine("网络", networkText(monitor.networkType))
+        }
+
+        if (settings.assets.isEmpty()) {
+            SectionCard("自选行情") {
+                Text("还没有监控标的，请先添加。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        settings.assets.forEach { asset ->
+            val quote = monitor.quotes[asset.symbol]
+            val assetAlerts = settings.alerts.filter { it.assetId == asset.id }
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onOpenAsset(asset) },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(asset.symbol, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(asset.displayName, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(quote?.price?.let(::priceText) ?: "--", fontWeight = FontWeight.Bold)
+                            val change = quote?.changePercent24h
+                            Text(
+                                change?.let { "%+.2f%%".format(it) } ?: "--",
+                                color = when {
+                                    change == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    change >= 0 -> Color(0xFF39D98A)
+                                    else -> Color(0xFFFF5C5C)
+                                }
+                            )
+                        }
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${assetAlerts.count { it.enabled }} 条启用提醒 · ${quote?.receivedTimeMillis?.let(::timeOrDash) ?: "等待行情"}",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(onClick = { pendingRemove = asset }) { Text("移除") }
+                    }
+                }
+            }
+        }
+        Button(onClick = { addDialogVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ 添加监控标的") }
+        OutlinedButton(onClick = onRefreshQuotes, modifier = Modifier.fillMaxWidth()) { Text("刷新首页行情") }
+        Spacer(Modifier.height(24.dp))
+    }
+
+    if (addDialogVisible) {
+        val available = SupportedAssets.all.filterNot { candidate -> settings.assets.any { it.id == candidate.id } }
+        AlertDialog(
+            onDismissRequest = { addDialogVisible = false },
+            title = { Text("添加监控标的") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (available.isEmpty()) Text("当前支持的标的都已添加")
+                    available.forEach { asset ->
+                        TextButton(
+                            onClick = {
+                                onAddAsset(asset)
+                                addDialogVisible = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("${asset.symbol} · ${asset.displayName}") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { addDialogVisible = false }) { Text("关闭") } }
+        )
+    }
+    pendingRemove?.let { asset ->
+        val alertCount = settings.alerts.count { it.assetId == asset.id }
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("移除 ${asset.symbol}？") },
+            text = { Text("同时删除该标的的 $alertCount 条提醒，此操作无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveAsset(asset)
+                    pendingRemove = null
+                }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text("取消") } }
+        )
+    }
+}
+
+@Composable
+private fun AssetDetailPanel(
+    asset: WatchAsset,
+    monitor: MonitorState,
+    state: CandleChartUiState,
+    alerts: List<AlertConfig>,
+    onBack: () -> Unit,
+    onTimeframe: (CandleTimeframe) -> Unit,
+    onRefresh: () -> Unit,
     onAddAlert: (String, Boolean, AlertDirection, String) -> Unit,
     onUpdateAlert: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
     onSetAlertEnabled: (AlertConfig, Boolean) -> Unit,
     onDeleteAlert: (AlertConfig) -> Unit
 ) {
+    val quote = monitor.quotes[asset.symbol]
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        StatusCard(monitor)
-
+        TextButton(onClick = onBack) { Text("← 返回行情列表") }
+        SectionCard(asset.symbol) {
+            Text(asset.displayName, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                quote?.price?.let { "${priceText(it)} USDT" } ?: "--",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary
+            )
+            quote?.changePercent24h?.let { change ->
+                StatusLine("24h", "%+.2f%%".format(change))
+            }
+            StatusLine("最后行情", quote?.receivedTimeMillis?.let(::timeOrDash) ?: "--")
+            StatusLine("行情连接", webSocketText(monitor.webSocketStatus))
+        }
+        CandleChartCard(
+            asset = asset,
+            state = state,
+            currentPrice = quote?.price,
+            alerts = alerts,
+            onTimeframe = onTimeframe,
+            onRefresh = onRefresh
+        )
         AlertListCard(
-            alerts = settings.alerts,
+            asset = asset,
+            alerts = alerts,
+            currentPrice = quote?.price,
             onAdd = onAddAlert,
             onUpdate = onUpdateAlert,
             onSetEnabled = onSetAlertEnabled,
             onDelete = onDeleteAlert
         )
-
-        SectionCard("监控控制") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onStart, enabled = !monitor.serviceRunning, modifier = Modifier.weight(1f)) {
-                    Text("开始监控")
-                }
-                OutlinedButton(onClick = onStop, enabled = monitor.serviceRunning, modifier = Modifier.weight(1f)) {
-                    Text("停止监控")
-                }
-            }
-            OutlinedButton(onClick = onTest, modifier = Modifier.fillMaxWidth()) { Text("测试通知") }
-            Text(
-                "测试通知会完全绕过 WebSocket、行情管理器和策略引擎。",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
         Spacer(Modifier.height(24.dp))
     }
 }
 
 @Composable
 private fun AlertListCard(
+    asset: WatchAsset,
     alerts: List<AlertConfig>,
+    currentPrice: Double?,
     onAdd: (String, Boolean, AlertDirection, String) -> Unit,
     onUpdate: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
     onSetEnabled: (AlertConfig, Boolean) -> Unit,
@@ -253,7 +417,7 @@ private fun AlertListCard(
     var editingAlert by remember { mutableStateOf<AlertConfig?>(null) }
     var pendingDelete by remember { mutableStateOf<AlertConfig?>(null) }
 
-    SectionCard("价格提醒列表（${alerts.size}）") {
+    SectionCard("${asset.symbol} 提醒（${alerts.size}）") {
         Text(
             "每条提醒独立触发；条件持续满足时不会重复通知，回到未满足后再次越过才会重新提醒。",
             style = MaterialTheme.typography.bodySmall
@@ -269,6 +433,20 @@ private fun AlertListCard(
                             Text(alert.name, fontWeight = FontWeight.SemiBold)
                             val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
                             Text("${alert.symbol} $symbol ${priceText(alert.threshold)} USDT")
+                            val conditionMet = currentPrice?.let { price ->
+                                if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) price >= alert.threshold
+                                else price <= alert.threshold
+                            }
+                            Text(
+                                when {
+                                    !alert.enabled -> "已停用"
+                                    conditionMet == true -> "条件已满足 · 等待回到条件外后重新激活"
+                                    conditionMet == false -> "等待触发"
+                                    else -> "等待行情"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Switch(checked = alert.enabled, onCheckedChange = { onSetEnabled(alert, it) })
                     }
@@ -286,7 +464,9 @@ private fun AlertListCard(
         }
         if (editorVisible) {
             AlertEditor(
+                asset = asset,
                 initial = editingAlert,
+                suggestedPrice = currentPrice,
                 onCancel = {
                     editorVisible = false
                     editingAlert = null
@@ -330,14 +510,18 @@ private fun AlertListCard(
 
 @Composable
 private fun AlertEditor(
+    asset: WatchAsset,
     initial: AlertConfig?,
+    suggestedPrice: Double?,
     onCancel: () -> Unit,
     onSave: (String, Boolean, AlertDirection, String) -> Unit
 ) {
-    var name by remember(initial?.id) { mutableStateOf(initial?.name ?: "BTC 价格提醒") }
+    var name by remember(initial?.id) { mutableStateOf(initial?.name ?: "${asset.symbol} 价格提醒") }
     var enabled by remember(initial?.id) { mutableStateOf(initial?.enabled ?: true) }
     var direction by remember(initial?.id) { mutableStateOf(initial?.direction ?: AlertDirection.ABOVE_OR_EQUAL) }
-    var threshold by remember(initial?.id) { mutableStateOf(initial?.threshold?.toString() ?: "") }
+    var threshold by remember(initial?.id) {
+        mutableStateOf(initial?.threshold?.toString() ?: suggestedPrice?.let(::priceText).orEmpty())
+    }
 
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -383,18 +567,15 @@ private fun AlertEditor(
 }
 
 @Composable
-private fun CandlePanel(
+private fun CandleChartCard(
+    asset: WatchAsset,
     state: CandleChartUiState,
     currentPrice: Double?,
     alerts: List<AlertConfig>,
     onTimeframe: (CandleTimeframe) -> Unit,
     onRefresh: () -> Unit
 ) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        SectionCard("BTC-USDT K 线") {
+        SectionCard("${asset.symbol} K 线") {
             Text(
                 "OKX 公共行情 · 仅用于监控，不含交易功能",
                 style = MaterialTheme.typography.bodySmall
@@ -425,7 +606,7 @@ private fun CandlePanel(
                 Text("K 线加载失败：$it", color = MaterialTheme.colorScheme.error)
                 Text("这不会影响 Foreground Service；可检查 VPN/网络后重试。", style = MaterialTheme.typography.bodySmall)
             }
-            if (state.candles.isNotEmpty()) {
+            if (state.symbol == asset.symbol && state.candles.isNotEmpty()) {
                 val newest = state.candles.last().withLivePrice(currentPrice)
                 StatusLine("最新", formatCandleTime(newest.openTimeMillis, state.timeframe))
                 StatusLine("O / H", "${priceText(newest.open)} / ${priceText(newest.high)}")
@@ -446,8 +627,6 @@ private fun CandlePanel(
                 Text("刷新 K 线")
             }
         }
-        Spacer(Modifier.height(24.dp))
-    }
 }
 
 @Composable
@@ -467,7 +646,7 @@ private fun CandlestickChart(
     val rawRange = (candleHigh - candleLow).coerceAtLeast(candleHigh * 0.001)
     val minPrice = candleLow - rawRange * 0.08
     val maxPrice = candleHigh + rawRange * 0.08
-    val enabledAlerts = alerts.filter { it.enabled && it.symbol == "BTC-USDT" }
+    val enabledAlerts = alerts.filter { it.enabled }
     val alertsInChart = enabledAlerts.filter { it.threshold in minPrice..maxPrice }
     val alertsAboveChart = enabledAlerts.filter { it.threshold > maxPrice }
     val alertsBelowChart = enabledAlerts.filter { it.threshold < minPrice }
@@ -588,7 +767,7 @@ private fun CandlestickChart(
     if (enabledAlerts.isNotEmpty()) {
         enabledAlerts.forEach { alert ->
             val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
-            Text("${alert.name}：BTC-USDT $symbol ${priceText(alert.threshold)} USDT", color = alertColor)
+            Text("${alert.name}：${alert.symbol} $symbol ${priceText(alert.threshold)} USDT", color = alertColor)
         }
     } else {
         Text("没有已启用的价格提醒", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -642,44 +821,6 @@ private fun MarketProbeCard(state: MarketProbeUiState, onRun: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun StatusCard(state: MonitorState) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(state.serviceRunning) {
-        while (state.serviceRunning) {
-            now = System.currentTimeMillis()
-            delay(1_000)
-        }
-    }
-    SectionCard("BTC-USDT") {
-        Text(
-            state.currentPrice?.let { "$ ${"%.2f".format(it)}" } ?: "--",
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.secondary
-        )
-        HorizontalDivider()
-        StatusLine("WebSocket", when (state.webSocketStatus) {
-            WebSocketStatus.CONNECTED -> "已连接"
-            WebSocketStatus.CONNECTING -> "正在连接"
-            WebSocketStatus.RECONNECTING -> "正在重连"
-            WebSocketStatus.DISCONNECTED -> "已断开"
-        })
-        StatusLine("Foreground Service", if (state.serviceRunning) "运行中" else "已停止")
-        StatusLine("网络", when (state.networkType) {
-            NetworkType.WIFI -> "WiFi"
-            NetworkType.CELLULAR -> "Cellular"
-            NetworkType.OTHER -> "Other"
-            NetworkType.OFFLINE -> "Offline"
-        })
-        StatusLine("最后行情", timeOrDash(state.lastTickMillis))
-        StatusLine("最后策略计算", timeOrDash(state.lastStrategyMillis))
-        StatusLine("最后 WebSocket 连接", timeOrDash(state.lastWebSocketConnectMillis))
-        StatusLine("最后 WebSocket 断开", timeOrDash(state.lastWebSocketDisconnectMillis))
-        StatusLine("Service Runtime", state.serviceStartedMillis?.let { runtime(now - it) } ?: "--")
     }
 }
 
@@ -805,12 +946,17 @@ private fun MorePanel(
     onCheckUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onOpenUnknownSources: () -> Unit,
+    onTestNotification: () -> Unit,
     onSaveRepository: (String, String) -> Unit
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        SectionCard("通知测试") {
+            OutlinedButton(onClick = onTestNotification, modifier = Modifier.fillMaxWidth()) { Text("测试通知") }
+            Text("完全绕过 WebSocket、行情和策略，用于检查声音、振动与系统权限。", style = MaterialTheme.typography.bodySmall)
+        }
         MarketProbeCard(marketProbe, onTestMarketData)
         UpdateCard(update, onCheckUpdate, onDownloadUpdate, onOpenUnknownSources)
         RepositorySettingsCard(settings, onSaveRepository)
@@ -887,11 +1033,6 @@ private fun timeOrDash(millis: Long?): String = millis?.let {
 
 private fun formatLogTime(millis: Long): String = logFormatter.format(Instant.ofEpochMilli(millis))
 
-private fun runtime(millis: Long): String {
-    val duration = Duration.ofMillis(millis.coerceAtLeast(0))
-    return "%02d:%02d:%02d".format(duration.toHours(), duration.toMinutesPart(), duration.toSecondsPart())
-}
-
 private fun MarketCandle.withLivePrice(currentPrice: Double?): MarketCandle {
     val price = currentPrice?.takeIf(Double::isFinite) ?: return this
     return copy(close = price, high = maxOf(high, price), low = minOf(low, price))
@@ -908,4 +1049,18 @@ private fun formatCandleTime(millis: Long, timeframe: CandleTimeframe): String {
     return DateTimeFormatter.ofPattern(pattern)
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochMilli(millis))
+}
+
+private fun webSocketText(status: WebSocketStatus): String = when (status) {
+    WebSocketStatus.CONNECTED -> "已连接"
+    WebSocketStatus.CONNECTING -> "正在连接"
+    WebSocketStatus.RECONNECTING -> "正在重连"
+    WebSocketStatus.DISCONNECTED -> "已断开"
+}
+
+private fun networkText(type: NetworkType): String = when (type) {
+    NetworkType.WIFI -> "WiFi"
+    NetworkType.CELLULAR -> "Cellular"
+    NetworkType.OTHER -> "Other"
+    NetworkType.OFFLINE -> "Offline"
 }

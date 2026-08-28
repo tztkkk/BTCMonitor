@@ -1,14 +1,15 @@
 # Monitor for Android 16
 
-`Monitor` 是一个完全在 Android 手机上运行的 BTC-USDT 行情监控 App。行情获取、策略判断、状态与日志存储、通知均在本地完成；没有后端、账号、API Key、下单或云同步。
+`Monitor` 是一个完全在 Android 手机上运行的多标的行情监控 App。行情获取、策略判断、状态与日志存储、通知均在本地完成；没有后端、账号、API Key、下单或云同步。当前行情源为 OKX 公开现货，内置 BTC、ETH、SOL、DOGE、XRP。
 
 当前固定配置：
 
 - `applicationId = com.tzt.btcmonitor`
 - Android 16 only：`minSdk = compileSdk = targetSdk = 36`
 - Kotlin + Jetpack Compose + Coroutines
-- OKX 公共 WebSocket：`tickers / BTC-USDT`（官方 8443、标准 443、AWS 8443 自动轮换；本地最多每秒分发一次）
-- OKX 公共 REST K 线：`1m / 5m / 15m / 1H / 4H / 1D`，Compose Canvas 本地绘制当前价和提醒价
+- OKX 公共 WebSocket：单连接动态订阅自选列表中的多个 `tickers`（官方 8443、标准 443、AWS 8443 自动轮换）
+- OKX 公共 REST K 线：每个标的支持 `1m / 5m / 15m / 1H / 4H / 1D`，Compose Canvas 本地绘制当前价和提醒价
+- 首页前台行情快照：Service 未运行时可通过公开 REST 刷新自选价格，不影响后台监控生命周期
 - OkHttp WebSocket，20 秒 ping，1/2/5/10/30 秒退避重连
 - 独立“行情获取测试”，逐端点验证握手、订阅、首个 Tick、价格、耗时和底层错误，不启动 Service 或策略
 - DataStore 配置，前台服务，两个通知通道
@@ -16,22 +17,28 @@
 - 完整诊断日志导出/分享，以及无需在 APK 保存 Token 的 GitHub Issue 提交
 - GitHub Releases 检查、下载、SHA-256/包名/versionCode/签名校验和系统安装器
 
-## 提醒模型
+## 页面与提醒模型
+
+- 首页是自选行情列表，只显示标的、最新价、24h 涨跌、提醒数量和连接状态。
+- 点击行情卡片进入标的详情；K 线和提醒都属于该详情页，不再作为顶层 Tab。
+- 自选列表可添加或移除；移除标的时会确认并同时删除它的提醒。
 
 - 首页以列表管理提醒，可以新增、编辑、启用/停用和删除。
-- 当前资产固定为 `BTC-USDT`，但每条提醒拥有独立 ID、名称、方向和价格，为后续多资产扩展预留结构。
+- 每条提醒绑定独立 `assetId`、symbol、名称、方向和价格。
 - 每条提醒分别保存“上一次是否满足条件”；首次 Tick 只建立基线，不在启动时误报。
 - 修改提醒后只重置该提醒的基线，其他提醒不受影响。
 - 多条提醒可在同一个 Tick 分别触发，通知和日志都会保留对应提醒名称。
-- v0.1.x 的单条提醒会自动作为列表中的第一条读取，不需要重新配置。
+- v0.1.x/v0.2.x 的 BTC 提醒会自动归入 BTC-USDT 详情，不需要重新配置。
+- 只要存在启用提醒且“全部监控”没有暂停，App 在前台时会自动启动 Foreground Service；全部提醒停用后自动停止。
 
 ## 架构判断
 
 ```text
-Compose UI ──> MonitorViewModel ──> DataStore / UpdateManager / MarketDataProbe
-                      │            └── CandleRepository ──> OKX public REST
+行情列表 ──> 标的详情（K线 + 提醒） ──> MonitorViewModel
+                                      ├── DataStore / UpdateManager / MarketDataProbe
+                                      └── CandleRepository ──> OKX public REST
                       │
-                      └──用户点击──> MarketMonitorService (specialUse FGS)
+                      └──前台自动协调──> MarketMonitorService (specialUse FGS)
                                          ├── NetworkMonitor
                                          ├── MarketDataManager ──> MarketTick
                                          ├── StrategyEngine ──> StrategyResult
@@ -50,7 +57,7 @@ Android 16 的标准前台服务类型中，没有“用户主动启动、长期
 - `shortService` 有短时限制。
 - 其他类型（位置、媒体、连接设备等）与实际用途不符。
 
-因此 Manifest 同时声明 `FOREGROUND_SERVICE_SPECIAL_USE`、`foregroundServiceType="specialUse"`，并通过 `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` 写明准确用途。Service 只由用户在前台点击“开始监控”启动，并始终显示常驻通知。依据：[Android 前台服务类型](https://developer.android.com/develop/background-work/services/fgs/service-types)、[启动前台服务](https://developer.android.com/develop/background-work/services/fgs/launch)。若未来上架 Google Play，还需要接受 Play Console 对 specialUse 说明的审核；本项目当前为侧载。
+因此 Manifest 同时声明 `FOREGROUND_SERVICE_SPECIAL_USE`、`foregroundServiceType="specialUse"`，并通过 `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` 写明准确用途。用户创建并启用提醒后，App 只在 Activity 位于前台时协调首次启动 Service；进入后台后由常驻通知保持用户可见。依据：[Android 前台服务类型](https://developer.android.com/develop/background-work/services/fgs/service-types)、[启动前台服务](https://developer.android.com/develop/background-work/services/fgs/launch)。若未来上架 Google Play，还需要接受 Play Console 对 specialUse 说明的审核；本项目当前为侧载。
 
 ## 项目结构
 
@@ -95,12 +102,12 @@ Debug 包使用 `com.tzt.btcmonitor.debug`，因此能与正式包并存。正�
 ## 第一次使用
 
 1. 安装并打开 App，允许通知权限。
-2. 在价格提醒列表中新增或编辑提醒，填写名称、方向和价格；可以独立启用或停用。
-3. 点击“测试通知”，单独确认声音、振动、锁屏和 Heads-up。用户可在系统通知设置中改变通道重要性，因此 App 不能强制 Heads-up。
-4. 点击“开始监控”。确认常驻通知、WebSocket“已连接”和最后行情更新时间。
-5. 打开“K线”页，选择周期；橙色虚线是已保存的提醒价格，蓝线是 WebSocket 当前价格。提醒价远离可见行情时会显示“图外”，避免压缩 K 线。
-6. “日志”页查看连接、网络、重连、策略和通知事件。
-7. 行情端点测试、版本更新和仓库设置集中在“更多”页。更新和日志 Issue 默认使用公开仓库 `tztkkk/BTCMonitor`。
+2. 首页点击“添加监控标的”，选择内置的 OKX 现货标的。
+3. 点击标的卡片进入详情，在 K 线下新增或编辑提醒。
+4. “更多”中点击“测试通知”，单独确认声音、振动、锁屏和 Heads-up。
+5. 有启用提醒时 App 会在前台自动启动监控；确认常驻通知、WebSocket 状态和列表价格更新时间。
+6. 详情页选择 K 线周期；橙色虚线是该标的提醒价格，蓝线是当前价格。
+7. “日志”页查看连接、网络、重连、策略和通知事件；行情端点测试、版本更新和仓库设置集中在“更多”。
 
 策略严格按状态变化触发。Service 启动或修改策略后的第一条 Tick 只建立条件基线；只有观测到“不满足 → 满足”才通知。满足期间不重复；回到不满足后再次跨越才再次通知。
 

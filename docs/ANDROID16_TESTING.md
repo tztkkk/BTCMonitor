@@ -18,7 +18,7 @@ adb logcat -v time -s BTCMonitor:I '*:S'
 2. 点击“测试通知”，验证声音、振动、锁屏显示和 Heads-up。
 3. 点击“测试行情获取”，等待三个端点全部完成；至少一个端点应显示成功、当前价格和耗时。此测试不依赖 Service 或策略。
 4. 保存一个接近当前价格的条件。
-5. 点击“开始监控”。
+5. 进入任一标的详情并启用至少一条提醒；App 应在前台自动启动监控。
 6. 等待状态变成 WebSocket 已连接，当前价格和 Last Tick 持续更新。
 
 如果三个端点都失败，先截图或提交诊断 Issue。结果会区分端点，并记录异常类型、底层 cause 和测试耗时，可用于判断 8443 端口、443 端口、TLS 或地区网络问题。
@@ -93,7 +93,7 @@ adb shell am start -n com.tzt.btcmonitor/.MainActivity
 adb shell dumpsys activity services com.tzt.btcmonitor
 ```
 
-预期：网络恢复后出现 `NetworkAvailable` 或 WebSocket failure，随后按退避序列重连；WebSocket 变成已连接，Last Tick 再次更新。若 Service 已停止且系统没有重建，用户需重新打开 App 并点击开始监控，这属于需要记录的可靠性结果。
+预期：网络恢复后出现 `NetworkAvailable` 或 WebSocket failure，随后按退避序列重连；WebSocket 变成已连接，Last Tick 再次更新。若 Service 已停止且系统没有重建，用户需重新打开 App；存在启用提醒时会在前台自动恢复监控，这仍属于需要记录的可靠性结果。
 
 ## 5. 电池优化对照
 

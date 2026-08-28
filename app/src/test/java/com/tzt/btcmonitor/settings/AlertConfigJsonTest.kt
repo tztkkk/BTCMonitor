@@ -2,6 +2,7 @@ package com.tzt.btcmonitor.settings
 
 import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.AlertDirection
+import com.tzt.btcmonitor.model.SupportedAssets
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -20,5 +21,11 @@ class AlertConfigJsonTest {
         )
 
         assertEquals(alerts, AlertConfigJson.decode(AlertConfigJson.encode(alerts)))
+    }
+
+    @Test
+    fun roundTripPreservesWatchAssets() {
+        val assets = SupportedAssets.all.take(3)
+        assertEquals(assets, WatchAssetJson.decode(WatchAssetJson.encode(assets)))
     }
 }

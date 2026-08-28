@@ -22,4 +22,15 @@ class CandleRepositoryTest {
         assertTrue(result.first().confirmed)
         assertFalse(result.last().confirmed)
     }
+
+    @Test
+    fun parsesTickerSnapshotWithChangeBaseline() {
+        val quote = OkxTickerParser.parse(
+            """{"code":"0","msg":"","data":[{"instId":"ETH-USDT","last":"4200.5","open24h":"4000","ts":"2000"}]}"""
+        )
+
+        assertEquals("ETH-USDT", quote.symbol)
+        assertEquals(4200.5, quote.price, 0.0)
+        assertEquals(5.0125, quote.changePercent24h ?: 0.0, 0.0001)
+    }
 }

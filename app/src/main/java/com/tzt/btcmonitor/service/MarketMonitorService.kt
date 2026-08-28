@@ -9,6 +9,7 @@ import com.tzt.btcmonitor.AppContainer
 import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketDataManager
 import com.tzt.btcmonitor.model.NetworkType
+import com.tzt.btcmonitor.model.AssetQuote
 import com.tzt.btcmonitor.model.WebSocketStatus
 import com.tzt.btcmonitor.network.NetworkMonitor
 import com.tzt.btcmonitor.notification.NotificationHelper
@@ -39,7 +40,15 @@ class MarketMonitorService : Service() {
             onStatus = ::onWebSocketStatus,
             onTick = { tick ->
                 AppContainer.monitorState.update {
-                    it.copy(currentPrice = tick.price, lastTickMillis = tick.receivedTimeMillis)
+                    it.copy(
+                        quotes = it.quotes + (tick.symbol to AssetQuote(
+                            symbol = tick.symbol,
+                            price = tick.price,
+                            open24h = tick.open24h,
+                            receivedTimeMillis = tick.receivedTimeMillis
+                        )),
+                        lastTickMillis = tick.receivedTimeMillis
+                    )
                 }
                 val results = strategyEngine.evaluate(tick)
                 AppContainer.monitorState.update { it.copy(lastStrategyMillis = System.currentTimeMillis()) }
@@ -62,6 +71,9 @@ class MarketMonitorService : Service() {
         serviceScope.launch {
             AppContainer.settings.settings.collectLatest { settings ->
                 strategyEngine.updateConfigs(settings.alerts)
+                val shouldMonitor = !settings.monitoringPaused && settings.alerts.any { it.enabled }
+                marketDataManager.updateSymbols(if (shouldMonitor) settings.assets.mapTo(mutableSetOf()) { it.symbol } else emptySet())
+                if (started && !shouldMonitor) stopMonitoring()
             }
         }
     }
