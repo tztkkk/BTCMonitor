@@ -121,6 +121,33 @@ adb shell dumpsys deviceidle whitelist -com.tzt.btcmonitor
 3. 条件持续满足时不得重复提醒。
 4. 等价格返回不满足，再次跨越时应再次提醒。
 
+### 多标的派发验证（TASK-003）
+
+1. 同时为 BTC-USDT 与 ETH-USDT 各创建并启用一条接近现价、初始不满足的提醒。
+2. 确认单一 WebSocket 已订阅两个 symbol，并同时观察两个标的的页面价格与日志。
+3. 等待两个标的分别跨越各自阈值；两者都应出现各自的 `StrategyTriggered` 和 `NotificationSent`，一个 symbol 的高频 Tick 不得长期压制另一个 symbol。
+4. 停用其中一个标的的全部提醒使其取消订阅，再重新启用；重新订阅后的首个有效 Tick 应能进入派发，不应继承取消前的 1 秒节流状态。
+5. 停止并重新启动监控后重复检查，两个标的仍应独立更新和触发。
+
+不依赖界面点按的真实行情自动化：
+
+```powershell
+.\gradlew.bat connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=com.tzt.btcmonitor.market.Task003Android16Test"
+```
+
+该测试直接在真机中使用生产 `MarketDataManager` 订阅 BTC-USDT 与 ETH-USDT，等待两个 symbol 都收到有效 OKX Tick，并在结束时关闭测试连接。运行前需确保设备已授权 ADB、网络可访问 OKX，且没有同时运行生产监控 Service，避免测试期间形成重复连接。
+
+同一测试类还使用可控的跨 symbol Tick 验证 BTC/ETH 提醒分别触发，并检查 App 发布了两条独立的 Android 通知；测试结束会删除自己创建的通知。这样不会把市场何时穿越阈值作为确定性测试条件。
+
+Android 13+ 首次安装仍必须由用户授予通知权限。部分 Xiaomi/HyperOS 设备会在 `connectedDebugAndroidTest` 安装周期后撤销权限，并禁止 ADB/UiAutomation 静默授予；这类设备可在构建并安装 target/test APK 后人工允许一次通知，再直接运行 runner：
+
+```powershell
+adb shell am force-stop com.tzt.btcmonitor.debug
+adb shell am instrument -w -r `
+  -e class com.tzt.btcmonitor.market.Task003Android16Test `
+  com.tzt.btcmonitor.debug.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 若只需验证通知通道，始终使用“测试通知”；它不证明 WebSocket 或策略正常。
 
 ## 7. 建议测试记录

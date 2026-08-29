@@ -38,7 +38,7 @@ class MarketDataManager(
     private var networkAvailable = false
     private var connected = false
     private var lastTickLogMillis = 0L
-    private var lastDispatchMillis = 0L
+    private val dispatchThrottle = SymbolDispatchThrottle(TICK_DISPATCH_INTERVAL_MS)
     private var lastMessageMillis = 0L
     private var pingSentMillis: Long? = null
     private var symbols: Set<String> = emptySet()
@@ -54,6 +54,7 @@ class MarketDataManager(
             val normalized = newSymbols.filterTo(sortedSetOf()) { it.isNotBlank() }
             if (normalized == symbols) return@launch
             symbols = normalized
+            dispatchThrottle.retainSymbols(symbols)
             logs.log("MarketSubscriptionsChanged", "symbols=${symbols.joinToString()}")
             if (!running) return@launch
             reconnectAttempt = 0
@@ -93,6 +94,7 @@ class MarketDataManager(
         socket?.close(1000, "Monitor stopped")
         socket = null
         connected = false
+        dispatchThrottle.clear()
         onStatus(WebSocketStatus.DISCONNECTED)
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
@@ -151,8 +153,7 @@ class MarketDataManager(
                     }
                     val now = System.currentTimeMillis()
                     parseTick(text)?.let { tick ->
-                        if (now - lastDispatchMillis < TICK_DISPATCH_INTERVAL_MS) return@let
-                        lastDispatchMillis = now
+                        if (!dispatchThrottle.shouldDispatch(tick.symbol, now)) return@let
                         if (now - lastTickLogMillis >= TICK_LOG_INTERVAL_MS) {
                             lastTickLogMillis = now
                             logs.log("LastTick", "price=${tick.price}")

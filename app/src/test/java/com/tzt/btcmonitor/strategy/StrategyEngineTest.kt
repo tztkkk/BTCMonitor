@@ -60,8 +60,41 @@ class StrategyEngineTest {
         assertTrue(lowTickResults.single { it.alertId == "low" }.triggered)
     }
 
+    @Test
+    fun alertsForDifferentSymbolsKeepIndependentEdgeState() {
+        val engine = StrategyEngine(
+            listOf(
+                AlertConfig(
+                    id = "btc-high",
+                    name = "BTC 高位",
+                    symbol = "BTC-USDT",
+                    assetId = "okx:BTC-USDT",
+                    threshold = 100.0
+                ),
+                AlertConfig(
+                    id = "eth-high",
+                    name = "ETH 高位",
+                    symbol = "ETH-USDT",
+                    assetId = "okx:ETH-USDT",
+                    threshold = 10.0
+                )
+            )
+        )
+
+        assertFalse(engine.evaluate(tick("BTC-USDT", 99.0)).any { it.triggered })
+        assertFalse(engine.evaluate(tick("ETH-USDT", 9.0)).any { it.triggered })
+        assertTrue(engine.evaluate(tick("BTC-USDT", 101.0)).single().triggered)
+        assertTrue(engine.evaluate(tick("ETH-USDT", 11.0)).single().triggered)
+    }
+
     private fun tick(price: Double) = MarketTick(
         symbol = "BTC-USDT",
+        price = price,
+        exchangeTimeMillis = 1L
+    )
+
+    private fun tick(symbol: String, price: Double) = MarketTick(
+        symbol = symbol,
         price = price,
         exchangeTimeMillis = 1L
     )

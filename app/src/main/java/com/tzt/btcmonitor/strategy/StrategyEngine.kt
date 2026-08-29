@@ -21,10 +21,11 @@ class StrategyEngine(initialConfigs: List<AlertConfig> = emptyList()) {
 
     @Synchronized
     fun evaluate(tick: MarketTick): List<StrategyResult> = configs.mapNotNull { config ->
-        if (!config.enabled || tick.symbol != config.symbol) {
+        if (!config.enabled) {
             previousConditions.remove(config.id)
             return@mapNotNull null
         }
+        if (tick.symbol != config.symbol) return@mapNotNull null
 
         val condition = when (config.direction) {
             AlertDirection.ABOVE_OR_EQUAL -> tick.price >= config.threshold
