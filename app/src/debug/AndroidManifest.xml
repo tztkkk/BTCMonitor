@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".ui.chart.Task008RendererTestHostActivity"
+            android:exported="true"
+            android:label="TASK-008 Renderer Test Host" />
+        <activity
+            android:name=".ui.chart.spike.ChartTechnologySpikeActivity"
+            android:exported="true"
+            android:label="Chart Technology Spike" />
+    </application>
+</manifest>

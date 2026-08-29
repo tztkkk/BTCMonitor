@@ -17,6 +17,19 @@
 - 完整诊断日志导出/分享，以及无需在 APK 保存 Token 的 GitHub Issue 提交
 - GitHub Releases 检查、下载、SHA-256/包名/versionCode/签名校验和系统安装器
 
+## 项目协作文档
+
+后续开发采用文档驱动流程：Requirement → Planner → TASK → Developer → Reviewer → Android 16 真机测试。开始任务前先阅读：
+
+- [`AGENTS.md`](AGENTS.md)：Agent、架构、开发、Build 与 Definition of Done 规则
+- [`docs/PRD.md`](docs/PRD.md)：产品范围、当前阶段与明确不做
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：真实现状、目标架构和已知风险
+- [`docs/UI_SPEC.md`](docs/UI_SPEC.md)：导航、页面与 Design System 规范
+- [`docs/TODO.md`](docs/TODO.md)：按依赖和优先级拆分的唯一 TASK 入口
+- [`docs/DECISIONS.md`](docs/DECISIONS.md)：跨模块技术决策（ADR）
+
+当前执行状态和下一项任务以 `docs/TODO.md` 为准。本 README 只提供运行与使用概览，产品、架构与 TASK 以以上文档为准。
+
 ## 页面与提醒模型
 
 - 首页是自选行情列表，只显示标的、最新价、24h 涨跌、提醒数量和连接状态。

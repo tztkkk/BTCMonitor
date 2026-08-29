@@ -5,7 +5,16 @@ data class InteractiveCandleChartCallbacks(
     val onCreateAlert: (Double) -> Unit,
     val onMoveAlert: (alertId: String, price: Double) -> Unit,
     val onViewportChanged: (ChartViewport) -> Unit
-)
+) {
+    companion object {
+        val None = InteractiveCandleChartCallbacks(
+            onLoadOlder = {},
+            onCreateAlert = {},
+            onMoveAlert = { _, _ -> },
+            onViewportChanged = {}
+        )
+    }
+}
 
 sealed interface ChartOutputEvent {
     data class LoadOlder(val anchor: ChartViewportAnchor) : ChartOutputEvent

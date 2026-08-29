@@ -42,6 +42,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
+import com.tzt.btcmonitor.BuildConfig
 import com.tzt.btcmonitor.logging.LogEntry
 import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketProbeStatus
@@ -75,6 +77,11 @@ import com.tzt.btcmonitor.model.WebSocketStatus
 import com.tzt.btcmonitor.model.SupportedAssets
 import com.tzt.btcmonitor.model.WatchAsset
 import com.tzt.btcmonitor.settings.AppSettings
+import com.tzt.btcmonitor.ui.chart.AlertLine
+import com.tzt.btcmonitor.ui.chart.CandleChartRenderState
+import com.tzt.btcmonitor.ui.chart.InteractiveCandleChart
+import com.tzt.btcmonitor.ui.chart.InteractiveCandleChartState
+import com.tzt.btcmonitor.ui.chart.toChartCandles
 import com.tzt.btcmonitor.update.UpdatePhase
 import com.tzt.btcmonitor.update.UpdateUiState
 import java.time.Instant
@@ -601,27 +608,90 @@ private fun CandleChartCard(
                 }
             }
 
-            if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            state.error?.let {
-                Text("K 线加载失败：$it", color = MaterialTheme.colorScheme.error)
-                Text("这不会影响 Foreground Service；可检查 VPN/网络后重试。", style = MaterialTheme.typography.bodySmall)
-            }
-            if (state.symbol == asset.symbol && state.candles.isNotEmpty()) {
-                val newest = state.candles.last().withLivePrice(currentPrice)
-                StatusLine("最新", formatCandleTime(newest.openTimeMillis, state.timeframe))
-                StatusLine("O / H", "${priceText(newest.open)} / ${priceText(newest.high)}")
-                StatusLine("L / C", "${priceText(newest.low)} / ${priceText(newest.close)}")
-                CandlestickChart(
-                    candles = state.candles,
-                    currentPrice = currentPrice,
-                    alerts = alerts,
-                    timeframe = state.timeframe
-                )
-                Text(
-                    "绿色上涨，红色下跌；蓝线为当前价，橙色虚线为已保存的提醒价。",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                state.loadedAtMillis?.let { StatusLine("数据加载", timeOrDash(it)) }
+            if (BuildConfig.DEBUG) {
+                val chartCandles = remember(
+                    state.symbol,
+                    state.timeframe,
+                    state.candles,
+                    currentPrice,
+                    asset.symbol
+                ) {
+                    if (state.symbol != asset.symbol) {
+                        emptyList()
+                    } else {
+                        state.candles.mapIndexed { index, candle ->
+                            if (index == state.candles.lastIndex) candle.withLivePrice(currentPrice) else candle
+                        }.toChartCandles()
+                    }
+                }
+                val alertLines = remember(alerts) {
+                    alerts.map { alert ->
+                        AlertLine(
+                            id = alert.id,
+                            label = alert.name,
+                            price = alert.threshold,
+                            enabled = alert.enabled
+                        )
+                    }
+                }
+                val renderState = when {
+                    state.error != null && chartCandles.isEmpty() ->
+                        CandleChartRenderState.Error(state.error)
+                    state.loading && chartCandles.isEmpty() -> CandleChartRenderState.Loading
+                    chartCandles.isEmpty() -> CandleChartRenderState.Empty
+                    else -> CandleChartRenderState.Ready(
+                        InteractiveCandleChartState(
+                            candles = chartCandles,
+                            alertLines = alertLines
+                        )
+                    )
+                }
+
+                if (state.loading && chartCandles.isNotEmpty()) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                if (state.error != null && chartCandles.isNotEmpty()) {
+                    Text("K 线刷新失败：${state.error}", color = MaterialTheme.colorScheme.error)
+                    Text("正在显示上次数据，可检查 VPN/网络后重试。", style = MaterialTheme.typography.bodySmall)
+                }
+                chartCandles.lastOrNull()?.let { newest ->
+                    StatusLine("最新", formatCandleTime(newest.openTimeMillis, state.timeframe))
+                    StatusLine("O / H", "${priceText(newest.open)} / ${priceText(newest.high)}")
+                    StatusLine("L / C", "${priceText(newest.low)} / ${priceText(newest.close)}")
+                }
+                key(state.symbol, state.timeframe) {
+                    InteractiveCandleChart(
+                        state = renderState,
+                        onRetry = onRefresh,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (chartCandles.isNotEmpty()) {
+                    state.loadedAtMillis?.let { StatusLine("数据加载", timeOrDash(it)) }
+                }
+            } else {
+                if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                state.error?.let {
+                    Text("K 线加载失败：$it", color = MaterialTheme.colorScheme.error)
+                    Text("这不会影响 Foreground Service；可检查 VPN/网络后重试。", style = MaterialTheme.typography.bodySmall)
+                }
+                if (state.symbol == asset.symbol && state.candles.isNotEmpty()) {
+                    val newest = state.candles.last().withLivePrice(currentPrice)
+                    StatusLine("最新", formatCandleTime(newest.openTimeMillis, state.timeframe))
+                    StatusLine("O / H", "${priceText(newest.open)} / ${priceText(newest.high)}")
+                    StatusLine("L / C", "${priceText(newest.low)} / ${priceText(newest.close)}")
+                    CandlestickChart(
+                        candles = state.candles,
+                        currentPrice = currentPrice,
+                        alerts = alerts,
+                        timeframe = state.timeframe
+                    )
+                    Text(
+                        "绿色上涨，红色下跌；蓝线为当前价，橙色虚线为已保存的提醒价。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    state.loadedAtMillis?.let { StatusLine("数据加载", timeOrDash(it)) }
+                }
             }
             OutlinedButton(onClick = onRefresh, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
                 Text("刷新 K 线")

@@ -182,6 +182,7 @@ class ChartContractTest {
             ChartAction.FollowLatest
         )
         assertTrue(latest.state.viewport.followsLatest)
+        assertNull(latest.state.viewport.priceRange)
     }
 
     private fun ChartVisibleRange.timesFrom(candles: List<ChartCandle>): List<Long> =

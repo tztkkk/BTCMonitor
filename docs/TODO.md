@@ -115,7 +115,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 ### TASK-007
 
 **Title:** 验证交互式 K 线图表库并完成选型 ADR  
-**Status:** TODO  
+**Status:** DONE  
 **Priority:** P1  
 **Goal:** 用证据决定采用成熟开源库还是可复用 Compose Canvas，不直接替换正式详情页。  
 **Scope:** 搜索并筛选仍维护的 Android/Compose 候选；核验官方仓库、发布记录、许可证和 Android 16/Compose 兼容性；建立独立实验页面/最小 Demo，用真实 candle 适配数据验证左右历史、双指时间缩放、价格轴缩放、十字光标/OHLC、自定义提醒线、提醒线拖动和分页插入后的视口稳定；比较性能与扩展成本；更新 ADR-006。  
@@ -123,12 +123,12 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 **Acceptance Criteria:** 至少记录候选和淘汰原因；选中方案有可运行 Demo 和全部核心能力证据；库方案记录准确版本与许可证且通过 Android 16；若没有合适库，ADR 明确选择 Compose Canvas；实验代码与生产入口隔离；Build 通过。  
 **Dependencies:** TASK-004, TASK-006.  
 **Affected Modules:** 独立 chart spike/demo、Gradle（仅验证所需且经 TASK 授权）、`DECISIONS.md`.  
-**Notes:** **Cannot Run In Parallel** with其他 Gradle 或 chart renderer 工作。验证结束前不得开始正式渲染实现。
+**Notes:** **Cannot Run In Parallel** with其他 Gradle 或 chart renderer 工作。验证结束前不得开始正式渲染实现。2026-08-29 已核验 Vico 3.3.1、TradingView Lightweight Charts Android 5.2.0、MPAndroidChart 3.1.0、chartkit 0.1.8 和 MPAndroidChart-Compose 候选；没有库同时满足价格轴缩放、稳定历史前插、持久 Crosshair/OHLC 与可命中拖动提醒线。ADR-006 已接受可复用 Compose Canvas，未增加第三方依赖。新增 Debug-only `ChartTechnologySpikeActivity`，默认通过现有 `CandleRepository` 加载真实 BTC-USDT Candle，并提供仅供 instrumentation 使用的确定性 fixture；以 TASK-006 API 验证核心交互，未接入正式页面。6 项 Spike 几何/视口测试通过。2026-08-29 在 Xiaomi 25102RKBEC（Android 16 / API 36）验证真实 K 线加载与基础渲染无 Crash；标准 `connectedDebugAndroidTest` 通过确定性数据验证水平平移、双指时间缩放、价格轴缩放、十字光标/OHLC、提醒线拖动单次提交及历史前插。`testDebugUnitTest`、`lintDebug`、`assembleDebug`、`assembleRelease`、`assembleDebugAndroidTest` 均通过；Reviewer 复核未发现 Critical/Major 问题。未开始 TASK-008。
 
 ### TASK-008
 
 **Title:** 建立可复用交互式 K 线渲染基础  
-**Status:** TODO  
+**Status:** DONE  
 **Priority:** P1  
 **Goal:** 按 ADR-006 的选型实现生产可用的图表外壳，同时保持现有详情页功能可回退。  
 **Scope:** 用选定库的 adapter 或 Compose Canvas 实现 Candle 绘制、坐标换算、Viewport 应用、提醒线绘制和基本状态；只依赖 TASK-006 API；提供 Loading/Empty/Error；保留现有静态图表直到新组件验收。  
@@ -136,12 +136,12 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 **Acceptance Criteria:** 给定相同输入可在 Preview/test host 重用；不读取 ViewModel/Repository；不同 timeframe 可重建正确视口；提醒线跨 timeframe 显示；旧图表仍可回退；Android 16 基础渲染无 Crash；Build 通过。  
 **Dependencies:** TASK-007.  
 **Affected Modules:** `ui/chart` renderer/adapter, asset detail integration behind isolated switch/branch.  
-**Notes:** **Cannot Run In Parallel** with TASK-009、TASK-010、TASK-012、TASK-013 或其他详情图表工作。
+**Notes:** **Cannot Run In Parallel** with TASK-009、TASK-010、TASK-012、TASK-013 或其他详情图表工作。2026-08-29 已按 ADR-006 新增只依赖 TASK-006 API 的可复用 Compose Canvas 渲染器，支持 Candle、Viewport、价格/坐标换算、启用/停用及图外提醒线、Loading/Empty/Error、文字摘要和 Preview；Debug 详情页通过隔离分支启用，Release 继续保留原静态图表回退。新增渲染计划/坐标单元测试和确定性 Debug test host。Xiaomi 25102RKBEC（Android 16 / API 36）专用 instrumentation 验证 60 根可见 K 线和 3 条不同状态提醒线基础渲染无 Crash；`testDebugUnitTest`、`testReleaseUnitTest`、`lintDebug`、`lintRelease`、`assembleDebug`、`assembleRelease`、`assembleDebugAndroidTest` 均通过。未实现 TASK-009 及后续手势、分页或提醒保存。
 
 ### TASK-009
 
 **Title:** 实现图表平移、双轴缩放与十字光标 OHLC  
-**Status:** TODO  
+**Status:** DONE  
 **Priority:** P1  
 **Goal:** 完成用户直接浏览和检查 K 线的核心交互。  
 **Scope:** 单指左右平移；双指时间范围缩放；价格轴纵向缩放；长按出现十字光标、按住移动、松手保留、点击空白关闭；选择最近 Candle 并显示本地时间与 OHLC；处理提醒线/十字光标/平移/缩放手势优先级；提供“回到最新”。  
@@ -149,7 +149,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 **Acceptance Criteria:** 四类手势符合 UI_SPEC；缩放不改变源 Candle；十字光标命中 Candle 正确且边界不溢出；松手保持、空白关闭；字体放大仍可读；大量当前数据下交互无明显卡顿；相关状态/坐标测试、Build 和 Android 16 手势验证通过。  
 **Dependencies:** TASK-008.  
 **Affected Modules:** `ui/chart`, Asset Detail 少量接入, tests.  
-**Notes:** **Cannot Run In Parallel** with任何 chart renderer/gesture 或 `MonitorScreen.kt`/详情 Screen 工作。
+**Notes:** **Cannot Run In Parallel** with任何 chart renderer/gesture 或 `MonitorScreen.kt`/详情 Screen 工作。2026-08-29 已在 TASK-008 可复用 Canvas 组件中实现单指水平平移、双指时间范围缩放、右侧价格轴纵向缩放、长按/移动/松手固定十字光标、空白点击隐藏和“回到最新”；十字光标按最近 Candle 显示本地时间及 O/H/L/C，切换 symbol/timeframe 会重建交互状态，所有手势仅更新 Chart state 并通过既有 callback 边界输出，不直接访问 Repository/DataStore。新增平移/双轴缩放边界、源 Candle 不变、十字光标固定/隐藏、回到最新及 10,000 根数据可见窗口上限测试。Xiaomi 25102RKBEC（Android 16 / API 36）在 1.3× Compose 字体密度下通过生产 renderer 手势 instrumentation，并与 TASK-008 基础渲染用例联合通过；`testDebugUnitTest`、`testReleaseUnitTest`、`lintDebug`、`lintRelease`、`assembleDebug`、`assembleRelease`、`assembleDebugAndroidTest` 均通过。未实现 TASK-010 自动历史分页、TASK-012 图上创建提醒或 TASK-013 提醒线拖动保存。
 
 ### TASK-010
 

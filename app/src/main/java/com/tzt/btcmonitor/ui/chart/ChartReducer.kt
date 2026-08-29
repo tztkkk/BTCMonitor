@@ -88,7 +88,7 @@ object InteractiveCandleChartReducer {
 
         ChartAction.FollowLatest -> changeViewport(
             state,
-            state.viewport.copy(anchor = null)
+            state.viewport.copy(anchor = null, priceRange = null)
         )
 
         is ChartAction.ShowCrosshair -> updateCrosshair(state, action.candleOpenTimeMillis, action.price)
