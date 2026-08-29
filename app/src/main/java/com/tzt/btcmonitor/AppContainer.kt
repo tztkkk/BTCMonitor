@@ -2,6 +2,8 @@ package com.tzt.btcmonitor
 
 import android.annotation.SuppressLint
 import android.content.Context
+import com.tzt.btcmonitor.data.market.OkxRestMarketRepository
+import com.tzt.btcmonitor.domain.market.MarketRepository
 import com.tzt.btcmonitor.logging.LogManager
 import com.tzt.btcmonitor.logging.DiagnosticsManager
 import com.tzt.btcmonitor.market.CandleRepository
@@ -23,6 +25,8 @@ object AppContainer {
         private set
     lateinit var candles: CandleRepository
         private set
+    lateinit var market: MarketRepository
+        private set
     lateinit var notifications: NotificationHelper
         private set
     lateinit var updates: UpdateManager
@@ -37,6 +41,7 @@ object AppContainer {
         monitorState = MonitorStateStore()
         diagnostics = DiagnosticsManager(appContext, logs) { monitorState.state.value }
         candles = CandleRepository(logs)
+        market = OkxRestMarketRepository(candles)
         notifications = NotificationHelper(appContext, logs)
         updates = UpdateManager(appContext, logs)
         notifications.createChannels()

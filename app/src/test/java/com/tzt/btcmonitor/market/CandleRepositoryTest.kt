@@ -4,8 +4,25 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.tzt.btcmonitor.model.CandleTimeframe
 
 class CandleRepositoryTest {
+    @Test
+    fun olderPageUsesHistoryEndpointAndOkxAfterCursor() {
+        val url = okxCandleRequestUrl(
+            symbol = "BTC-USDT",
+            timeframe = CandleTimeframe.FIVE_MINUTES,
+            limit = 80,
+            beforeExclusiveMillis = 123_000L
+        )
+
+        assertEquals(
+            "https://www.okx.com/api/v5/market/history-candles?" +
+                "instId=BTC-USDT&bar=5m&limit=80&after=123000",
+            url
+        )
+    }
+
     @Test
     fun parsesAndSortsOkxCandlesOldestFirst() {
         val body = """

@@ -99,6 +99,31 @@ class ChartContractTest {
     }
 
     @Test
+    fun olderFailureKeepsCandlesAndRetryEmitsAnotherRequest() {
+        val candles = (100L..119L).map { chartCandle(it * 1_000L) }
+        val loading = InteractiveCandleChartReducer.reduce(
+            InteractiveCandleChartState(
+                candles = candles,
+                history = ChartHistoryState(hasMore = true)
+            ),
+            ChartAction.RequestLoadOlder
+        ).state
+
+        val failed = InteractiveCandleChartReducer.reduce(
+            loading,
+            ChartAction.OlderCandlesFailed("offline")
+        ).state
+        assertEquals(candles, failed.candles)
+        assertFalse(failed.history.loadingOlder)
+        assertEquals("offline", failed.history.error)
+
+        val retry = InteractiveCandleChartReducer.reduce(failed, ChartAction.RequestLoadOlder)
+        assertTrue(retry.state.history.loadingOlder)
+        assertNull(retry.state.history.error)
+        assertTrue(retry.events.single() is ChartOutputEvent.LoadOlder)
+    }
+
+    @Test
     fun alertLineDragEmitsMoveOnlyOnceWhenGestureEnds() {
         var state = InteractiveCandleChartState(
             alertLines = listOf(AlertLine("alert", "Target", 100.0, enabled = true))

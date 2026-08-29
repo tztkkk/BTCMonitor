@@ -203,6 +203,22 @@ private fun ReadyCandleChart(
     val chartHeight = 390.dp
     val axisWidth = 74.dp
 
+    LaunchedEffect(
+        plan.visibleRange.startInclusive,
+        state.history.hasMore,
+        state.history.loadingOlder,
+        state.history.error
+    ) {
+        if (
+            plan.visibleRange.startInclusive <= LOAD_OLDER_THRESHOLD_CANDLES &&
+            state.history.hasMore &&
+            !state.history.loadingOlder &&
+            state.history.error == null
+        ) {
+            latestOnAction(ChartAction.RequestLoadOlder)
+        }
+    }
+
     Column(
         modifier = modifier.semantics { contentDescription = summary },
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -460,6 +476,33 @@ private fun ReadyCandleChart(
             modifier = Modifier.testTag("interactive-chart-window"),
             style = MaterialTheme.typography.bodySmall
         )
+        if (state.history.loadingOlder) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.testTag("interactive-chart-loading-older")
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.width(18.dp).height(18.dp),
+                    strokeWidth = 2.dp
+                )
+                Text("正在加载更早 K 线…", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        state.history.error?.let { error ->
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.testTag("interactive-chart-older-error")
+            ) {
+                Text("更早 K 线加载失败：$error", color = colors.error)
+                OutlinedButton(
+                    onClick = { onAction(ChartAction.RequestLoadOlder) },
+                    modifier = Modifier.testTag("interactive-chart-retry-older")
+                ) {
+                    Text("重试加载更早 K 线")
+                }
+            }
+        }
         CrosshairReadout(state)
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -539,6 +582,8 @@ private fun chartPriceText(price: Double): String = when {
 
 private fun chartTimeText(millis: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(millis))
+
+private const val LOAD_OLDER_THRESHOLD_CANDLES = 5
 
 @Preview(showBackground = true, widthDp = 420)
 @Composable

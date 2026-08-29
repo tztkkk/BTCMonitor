@@ -11,10 +11,10 @@ import com.tzt.btcmonitor.market.MarketProbeUiState
 import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
-import com.tzt.btcmonitor.model.MarketCandle
 import com.tzt.btcmonitor.model.WatchAsset
 import com.tzt.btcmonitor.service.MarketMonitorService
 import com.tzt.btcmonitor.settings.AppSettings
+import com.tzt.btcmonitor.ui.chart.ChartViewportAnchor
 import com.tzt.btcmonitor.update.UpdateUiState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -27,28 +27,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class CandleChartUiState(
-    val symbol: String = "BTC-USDT",
-    val timeframe: CandleTimeframe = CandleTimeframe.FIVE_MINUTES,
-    val candles: List<MarketCandle> = emptyList(),
-    val loading: Boolean = false,
-    val error: String? = null,
-    val loadedAtMillis: Long? = null
-)
-
 class MonitorViewModel(application: Application) : AndroidViewModel(application) {
     private val marketProbe = MarketDataProbe(AppContainer.logs)
     private val mutableMarketProbeState = MutableStateFlow(MarketProbeUiState())
     private var marketProbeJob: Job? = null
-    private var candleJob: Job? = null
     private var quoteSnapshotJob: Job? = null
-    private val mutableCandleState = MutableStateFlow(CandleChartUiState())
+    private val candleChart = CandleChartStateHolder(AppContainer.market, viewModelScope)
 
     val monitorState = AppContainer.monitorState.state
     val logs = AppContainer.logs.entries
     val updateState: StateFlow<UpdateUiState> = AppContainer.updates.state
     val marketProbeState: StateFlow<MarketProbeUiState> = mutableMarketProbeState.asStateFlow()
-    val candleState: StateFlow<CandleChartUiState> = mutableCandleState.asStateFlow()
+    val candleState: StateFlow<CandleChartUiState> = candleChart.state
     val settings: StateFlow<AppSettings> = AppContainer.settings.settings.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -114,33 +104,14 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun loadCandles(
-        symbol: String = mutableCandleState.value.symbol,
-        timeframe: CandleTimeframe = mutableCandleState.value.timeframe
+        symbol: String = candleState.value.symbol,
+        timeframe: CandleTimeframe = candleState.value.timeframe
     ) {
-        candleJob?.cancel()
-        candleJob = viewModelScope.launch {
-            mutableCandleState.value = mutableCandleState.value.copy(
-                timeframe = timeframe,
-                symbol = symbol,
-                loading = true,
-                error = null
-            )
-            runCatching { AppContainer.candles.loadRecent(symbol, timeframe) }
-                .onSuccess { candles ->
-                    mutableCandleState.value = CandleChartUiState(
-                        timeframe = timeframe,
-                        symbol = symbol,
-                        candles = candles,
-                        loadedAtMillis = System.currentTimeMillis()
-                    )
-                }
-                .onFailure { error ->
-                    mutableCandleState.value = mutableCandleState.value.copy(
-                        loading = false,
-                        error = MarketDataProbe.exceptionDetail(error)
-                    )
-                }
-        }
+        candleChart.loadInitial(symbol, timeframe)
+    }
+
+    fun loadOlderCandles(anchor: ChartViewportAnchor) {
+        candleChart.loadOlder(anchor)
     }
 
     fun addAlert(asset: WatchAsset, name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {

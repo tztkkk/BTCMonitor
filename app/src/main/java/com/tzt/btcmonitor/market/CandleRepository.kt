@@ -18,7 +18,18 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class CandleRepository(private val logs: LogManager) {
+interface OkxMarketRestDataSource {
+    suspend fun loadCandlePage(
+        symbol: String,
+        timeframe: CandleTimeframe,
+        beforeExclusiveMillis: Long? = null,
+        limit: Int = 80
+    ): List<MarketCandle>
+
+    suspend fun loadQuote(symbol: String): AssetQuote
+}
+
+class CandleRepository(private val logs: LogManager) : OkxMarketRestDataSource {
     private val client = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -30,22 +41,37 @@ class CandleRepository(private val logs: LogManager) {
         symbol: String,
         timeframe: CandleTimeframe,
         limit: Int = DEFAULT_LIMIT
+    ): List<MarketCandle> = loadCandlePage(symbol, timeframe, limit = limit).also {
+        require(it.isNotEmpty()) { "OKX 返回空 K 线列表" }
+    }
+
+    override suspend fun loadCandlePage(
+        symbol: String,
+        timeframe: CandleTimeframe,
+        beforeExclusiveMillis: Long?,
+        limit: Int
     ): List<MarketCandle> {
         require(limit in 1..300)
+        require(beforeExclusiveMillis == null || beforeExclusiveMillis > 0L)
         require(symbol.matches(Regex("[A-Z0-9-]{3,30}"))) { "无效的行情标的" }
         val request = Request.Builder()
-            .url("$CANDLES_URL?instId=$symbol&bar=${timeframe.apiValue}&limit=$limit")
+            .url(okxCandleRequestUrl(symbol, timeframe, limit, beforeExclusiveMillis))
             .header("User-Agent", "BTCMonitor-Android/${BuildConfig.VERSION_NAME}")
             .get()
             .build()
 
-        logs.log("CandlesLoading", "$symbol ${timeframe.apiValue} limit=$limit")
+        logs.log(
+            "CandlesLoading",
+            "$symbol ${timeframe.apiValue} limit=$limit before=${beforeExclusiveMillis ?: "latest"}"
+        )
         return try {
-            val body = client.newCall(request).awaitBody()
-            OkxCandleParser.parse(body).also {
-                require(it.isNotEmpty()) { "OKX 返回空 K 线列表" }
-                logs.log("CandlesLoaded", "$symbol ${timeframe.apiValue} count=${it.size}")
-            }
+            OkxCandleParser.parse(client.newCall(request).awaitBody())
+                .filter { candle ->
+                    beforeExclusiveMillis?.let { candle.openTimeMillis < it } ?: true
+                }
+                .also {
+                    logs.log("CandlesLoaded", "$symbol ${timeframe.apiValue} count=${it.size}")
+                }
         } catch (error: Throwable) {
             logs.log(
                 "CandlesError",
@@ -56,7 +82,7 @@ class CandleRepository(private val logs: LogManager) {
         }
     }
 
-    suspend fun loadQuote(symbol: String): AssetQuote {
+    override suspend fun loadQuote(symbol: String): AssetQuote {
         require(symbol.matches(Regex("[A-Z0-9-]{3,30}"))) { "无效的行情标的" }
         val request = Request.Builder()
             .url("$TICKER_URL?instId=$symbol")
@@ -94,10 +120,24 @@ class CandleRepository(private val logs: LogManager) {
     }
 
     companion object {
-        private const val CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
         private const val TICKER_URL = "https://www.okx.com/api/v5/market/ticker"
         private const val DEFAULT_LIMIT = 80
     }
+}
+
+internal fun okxCandleRequestUrl(
+    symbol: String,
+    timeframe: CandleTimeframe,
+    limit: Int,
+    beforeExclusiveMillis: Long?
+): String {
+    val endpoint = if (beforeExclusiveMillis == null) {
+        "https://www.okx.com/api/v5/market/candles"
+    } else {
+        "https://www.okx.com/api/v5/market/history-candles"
+    }
+    val cursorQuery = beforeExclusiveMillis?.let { "&after=$it" }.orEmpty()
+    return "$endpoint?instId=$symbol&bar=${timeframe.apiValue}&limit=$limit$cursorQuery"
 }
 
 internal object OkxTickerParser {

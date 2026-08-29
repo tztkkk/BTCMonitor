@@ -79,7 +79,10 @@ import com.tzt.btcmonitor.model.WatchAsset
 import com.tzt.btcmonitor.settings.AppSettings
 import com.tzt.btcmonitor.ui.chart.AlertLine
 import com.tzt.btcmonitor.ui.chart.CandleChartRenderState
+import com.tzt.btcmonitor.ui.chart.ChartHistoryState
+import com.tzt.btcmonitor.ui.chart.ChartViewportAnchor
 import com.tzt.btcmonitor.ui.chart.InteractiveCandleChart
+import com.tzt.btcmonitor.ui.chart.InteractiveCandleChartCallbacks
 import com.tzt.btcmonitor.ui.chart.InteractiveCandleChartState
 import com.tzt.btcmonitor.ui.chart.toChartCandles
 import com.tzt.btcmonitor.update.UpdatePhase
@@ -175,6 +178,7 @@ fun MonitorApp(
                         onBack = { selectedAssetId = null },
                         onTimeframe = { viewModel.loadCandles(selectedAsset.symbol, it) },
                         onRefresh = { viewModel.loadCandles(selectedAsset.symbol, candleChart.timeframe) },
+                        onLoadOlder = viewModel::loadOlderCandles,
                         onAddAlert = { name, enabled, direction, threshold ->
                             viewModel.addAlert(selectedAsset, name, enabled, direction, threshold) { message = it }
                         },
@@ -364,6 +368,7 @@ private fun AssetDetailPanel(
     onBack: () -> Unit,
     onTimeframe: (CandleTimeframe) -> Unit,
     onRefresh: () -> Unit,
+    onLoadOlder: (ChartViewportAnchor) -> Unit,
     onAddAlert: (String, Boolean, AlertDirection, String) -> Unit,
     onUpdateAlert: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
     onSetAlertEnabled: (AlertConfig, Boolean) -> Unit,
@@ -395,7 +400,8 @@ private fun AssetDetailPanel(
             currentPrice = quote?.price,
             alerts = alerts,
             onTimeframe = onTimeframe,
-            onRefresh = onRefresh
+            onRefresh = onRefresh,
+            onLoadOlder = onLoadOlder
         )
         AlertListCard(
             asset = asset,
@@ -580,7 +586,8 @@ private fun CandleChartCard(
     currentPrice: Double?,
     alerts: List<AlertConfig>,
     onTimeframe: (CandleTimeframe) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onLoadOlder: (ChartViewportAnchor) -> Unit
 ) {
         SectionCard("${asset.symbol} K 线") {
             Text(
@@ -642,7 +649,12 @@ private fun CandleChartCard(
                     else -> CandleChartRenderState.Ready(
                         InteractiveCandleChartState(
                             candles = chartCandles,
-                            alertLines = alertLines
+                            alertLines = alertLines,
+                            history = ChartHistoryState(
+                                hasMore = state.hasMore,
+                                loadingOlder = state.loadingOlder,
+                                error = state.olderError
+                            )
                         )
                     )
                 }
@@ -663,6 +675,11 @@ private fun CandleChartCard(
                     InteractiveCandleChart(
                         state = renderState,
                         onRetry = onRefresh,
+                        callbacks = remember(onLoadOlder) {
+                            InteractiveCandleChartCallbacks.None.copy(
+                                onLoadOlder = onLoadOlder
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

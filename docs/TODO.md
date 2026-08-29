@@ -154,7 +154,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 ### TASK-010
 
 **Title:** 接入 K 线历史自动分页并保持视口  
-**Status:** TODO  
+**Status:** DONE
 **Priority:** P1  
 **Goal:** 用户拖到最左端时自动加载更早 K 线，追加后视图不跳回最新位置。  
 **Scope:** 将现有 REST candle 实现适配 TASK-004 的分页接口；ViewModel/UiState 支持初次加载、load older、hasMore、分页错误和并发去重；图表达到左边阈值触发一次 `onLoadOlder`；合并时按时间去重排序并恢复 anchor。  
@@ -162,7 +162,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 **Acceptance Criteria:** 左边界自动加载；同一时刻最多一个旧数据请求；重复 Candle 不重复显示；加载成功后屏幕锚点保持；失败可局部重试且现有数据保留；切换 symbol/timeframe 取消旧请求且不串数据；repository/ViewModel 测试、Build 和 Android 16 验证通过。  
 **Dependencies:** TASK-004, TASK-009.  
 **Affected Modules:** `market/CandleRepository` adapter, MarketRepository implementation, `MonitorViewModel`/新 chart ViewModel, chart UiState, tests.  
-**Notes:** **Cannot Run In Parallel** with MarketRepository、ViewModel 或 chart viewport 工作。
+**Notes:** **Cannot Run In Parallel** with MarketRepository、ViewModel 或 chart viewport 工作。2026-08-29 已将现有 OKX REST K 线实现适配 TASK-004 `MarketRepository` 分页边界：初次请求继续使用 candles endpoint，旧数据请求使用 history-candles exclusive cursor；新增独立 chart state holder 管理初次加载、单一旧页请求、局部失败重试、切换标的/周期取消和防串数据，并按开盘时间去重排序。图表在左侧阈值自动请求一次旧页，加载前固化 viewport anchor，合并后保持屏幕位置；分页 loading/error/retry 不清空已有数据。新增 repository/state holder/reducer 单元测试及确定性 Debug test host；65 项 Debug 与 59 项 Release 单元测试、`lintDebug`、`lintRelease`、`assembleDebug`、`assembleRelease`、`assembleDebugAndroidTest` 均通过。Xiaomi 25102RKBEC（Android 16 / API 36）通过 TASK-008/009/010 三项联合 instrumentation，验证左边界只加载一次、70→100 根合并后 anchor 从索引 10..69 稳定为 30..89，且基础渲染和既有手势无回归。未实现 TASK-011 及后续提醒 schema 或图上提醒操作。
 
 ### TASK-011
 
