@@ -8,15 +8,12 @@ data class MarketTick(
     val receivedTimeMillis: Long = System.currentTimeMillis()
 )
 
-enum class AlertDirection { ABOVE_OR_EQUAL, BELOW_OR_EQUAL }
-
 data class AlertConfig(
     val id: String = DEFAULT_ALERT_ID,
     val name: String = "BTC 价格提醒",
     val assetId: String = "okx:BTC-USDT",
     val symbol: String = "BTC-USDT",
     val enabled: Boolean = true,
-    val direction: AlertDirection = AlertDirection.ABOVE_OR_EQUAL,
     val threshold: Double = 120_000.0
 ) {
     companion object {

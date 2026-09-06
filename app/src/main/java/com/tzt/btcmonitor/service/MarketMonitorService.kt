@@ -70,7 +70,7 @@ class MarketMonitorService : Service() {
         }
         serviceScope.launch {
             AppContainer.settings.settings.collectLatest { settings ->
-                strategyEngine.updateConfigs(settings.alerts)
+                strategyEngine.updateConfigs(settings.alerts, settings.alertCooldown)
                 val shouldMonitor = !settings.monitoringPaused && settings.alerts.any { it.enabled }
                 marketDataManager.updateSymbols(if (shouldMonitor) settings.assets.mapTo(mutableSetOf()) { it.symbol } else emptySet())
                 if (started && !shouldMonitor) stopMonitoring()

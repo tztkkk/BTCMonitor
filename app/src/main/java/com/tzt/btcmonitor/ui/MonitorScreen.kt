@@ -67,7 +67,6 @@ import com.tzt.btcmonitor.logging.LogEntry
 import com.tzt.btcmonitor.logging.LogLevel
 import com.tzt.btcmonitor.market.MarketProbeStatus
 import com.tzt.btcmonitor.market.MarketProbeUiState
-import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
 import com.tzt.btcmonitor.model.MarketCandle
@@ -179,11 +178,11 @@ fun MonitorApp(
                         onTimeframe = { viewModel.loadCandles(selectedAsset.symbol, it) },
                         onRefresh = { viewModel.loadCandles(selectedAsset.symbol, candleChart.timeframe) },
                         onLoadOlder = viewModel::loadOlderCandles,
-                        onAddAlert = { name, enabled, direction, threshold ->
-                            viewModel.addAlert(selectedAsset, name, enabled, direction, threshold) { message = it }
+                        onAddAlert = { name, enabled, threshold ->
+                            viewModel.addAlert(selectedAsset, name, enabled, threshold) { message = it }
                         },
-                        onUpdateAlert = { alert, name, enabled, direction, threshold ->
-                            viewModel.updateAlert(alert, name, enabled, direction, threshold) { message = it }
+                        onUpdateAlert = { alert, name, enabled, threshold ->
+                            viewModel.updateAlert(alert, name, enabled, threshold) { message = it }
                         },
                         onSetAlertEnabled = { alert, enabled ->
                             viewModel.setAlertEnabled(alert, enabled) { message = it }
@@ -369,8 +368,8 @@ private fun AssetDetailPanel(
     onTimeframe: (CandleTimeframe) -> Unit,
     onRefresh: () -> Unit,
     onLoadOlder: (ChartViewportAnchor) -> Unit,
-    onAddAlert: (String, Boolean, AlertDirection, String) -> Unit,
-    onUpdateAlert: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
+    onAddAlert: (String, Boolean, String) -> Unit,
+    onUpdateAlert: (AlertConfig, String, Boolean, String) -> Unit,
     onSetAlertEnabled: (AlertConfig, Boolean) -> Unit,
     onDeleteAlert: (AlertConfig) -> Unit
 ) {
@@ -421,8 +420,8 @@ private fun AlertListCard(
     asset: WatchAsset,
     alerts: List<AlertConfig>,
     currentPrice: Double?,
-    onAdd: (String, Boolean, AlertDirection, String) -> Unit,
-    onUpdate: (AlertConfig, String, Boolean, AlertDirection, String) -> Unit,
+    onAdd: (String, Boolean, String) -> Unit,
+    onUpdate: (AlertConfig, String, Boolean, String) -> Unit,
     onSetEnabled: (AlertConfig, Boolean) -> Unit,
     onDelete: (AlertConfig) -> Unit
 ) {
@@ -432,7 +431,7 @@ private fun AlertListCard(
 
     SectionCard("${asset.symbol} 提醒（${alerts.size}）") {
         Text(
-            "每条提醒独立触发；条件持续满足时不会重复通知，回到未满足后再次越过才会重新提醒。",
+            "向上或向下穿越目标价均可提醒；冷却期间不通知，结束后仍需新的穿越。",
             style = MaterialTheme.typography.bodySmall
         )
         if (alerts.isEmpty()) {
@@ -444,17 +443,11 @@ private fun AlertListCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(alert.name, fontWeight = FontWeight.SemiBold)
-                            val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
-                            Text("${alert.symbol} $symbol ${priceText(alert.threshold)} USDT")
-                            val conditionMet = currentPrice?.let { price ->
-                                if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) price >= alert.threshold
-                                else price <= alert.threshold
-                            }
+                            Text("${alert.symbol} 到价 ${priceText(alert.threshold)} USDT")
                             Text(
                                 when {
                                     !alert.enabled -> "已停用"
-                                    conditionMet == true -> "条件已满足 · 等待回到条件外后重新激活"
-                                    conditionMet == false -> "等待触发"
+                                    currentPrice != null -> "监控双向穿越"
                                     else -> "等待行情"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
@@ -484,10 +477,10 @@ private fun AlertListCard(
                     editorVisible = false
                     editingAlert = null
                 },
-                onSave = { name, enabled, direction, threshold ->
+                onSave = { name, enabled, threshold ->
                     val current = editingAlert
-                    if (current == null) onAdd(name, enabled, direction, threshold)
-                    else onUpdate(current, name, enabled, direction, threshold)
+                    if (current == null) onAdd(name, enabled, threshold)
+                    else onUpdate(current, name, enabled, threshold)
                     editorVisible = false
                     editingAlert = null
                 }
@@ -527,11 +520,10 @@ private fun AlertEditor(
     initial: AlertConfig?,
     suggestedPrice: Double?,
     onCancel: () -> Unit,
-    onSave: (String, Boolean, AlertDirection, String) -> Unit
+    onSave: (String, Boolean, String) -> Unit
 ) {
     var name by remember(initial?.id) { mutableStateOf(initial?.name ?: "${asset.symbol} 价格提醒") }
     var enabled by remember(initial?.id) { mutableStateOf(initial?.enabled ?: true) }
-    var direction by remember(initial?.id) { mutableStateOf(initial?.direction ?: AlertDirection.ABOVE_OR_EQUAL) }
     var threshold by remember(initial?.id) {
         mutableStateOf(initial?.threshold?.toString() ?: suggestedPrice?.let(::priceText).orEmpty())
     }
@@ -550,15 +542,6 @@ private fun AlertEditor(
                 Text("启用", modifier = Modifier.weight(1f))
                 Switch(checked = enabled, onCheckedChange = { enabled = it })
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (direction == AlertDirection.ABOVE_OR_EQUAL) {
-                    Button(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Above") }
-                    OutlinedButton(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Below") }
-                } else {
-                    OutlinedButton(onClick = { direction = AlertDirection.ABOVE_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Above") }
-                    Button(onClick = { direction = AlertDirection.BELOW_OR_EQUAL }, modifier = Modifier.weight(1f)) { Text("Price Below") }
-                }
-            }
             OutlinedTextField(
                 value = threshold,
                 onValueChange = { threshold = it },
@@ -570,7 +553,7 @@ private fun AlertEditor(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
                 Button(
-                    onClick = { onSave(name, enabled, direction, threshold) },
+                    onClick = { onSave(name, enabled, threshold) },
                     enabled = name.isNotBlank() && threshold.toDoubleOrNull()?.let { it > 0.0 } == true,
                     modifier = Modifier.weight(1f)
                 ) { Text("保存") }
@@ -853,8 +836,7 @@ private fun CandlestickChart(
 
     if (enabledAlerts.isNotEmpty()) {
         enabledAlerts.forEach { alert ->
-            val symbol = if (alert.direction == AlertDirection.ABOVE_OR_EQUAL) "≥" else "≤"
-            Text("${alert.name}：${alert.symbol} $symbol ${priceText(alert.threshold)} USDT", color = alertColor)
+            Text("${alert.name}：${alert.symbol} 到价 ${priceText(alert.threshold)} USDT", color = alertColor)
         }
     } else {
         Text("没有已启用的价格提醒", color = MaterialTheme.colorScheme.onSurfaceVariant)

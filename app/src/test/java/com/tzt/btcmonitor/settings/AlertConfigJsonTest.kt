@@ -1,7 +1,6 @@
 package com.tzt.btcmonitor.settings
 
 import com.tzt.btcmonitor.model.AlertConfig
-import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.SupportedAssets
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -15,7 +14,6 @@ class AlertConfigJsonTest {
                 id = "two",
                 name = "低位",
                 enabled = false,
-                direction = AlertDirection.BELOW_OR_EQUAL,
                 threshold = 70_000.0
             )
         )

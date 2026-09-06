@@ -1,54 +1,52 @@
 package com.tzt.btcmonitor.strategy
 
+import com.tzt.btcmonitor.domain.alert.AlertCooldown
+import com.tzt.btcmonitor.domain.alert.TargetPriceAlert
+import com.tzt.btcmonitor.domain.alert.TargetPriceAlertEvaluator
+import com.tzt.btcmonitor.domain.alert.TargetPriceTick
 import com.tzt.btcmonitor.model.AlertConfig
-import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.MarketTick
 import com.tzt.btcmonitor.model.StrategyResult
+import java.time.Clock
 
-class StrategyEngine(initialConfigs: List<AlertConfig> = emptyList()) {
+/** Production adapter; the Domain evaluator owns all crossing and cooldown state. */
+class StrategyEngine(
+    initialConfigs: List<AlertConfig> = emptyList(),
+    clock: Clock = Clock.systemUTC()
+) {
     private var configs = initialConfigs.distinctBy(AlertConfig::id)
-    private val previousConditions = mutableMapOf<String, Boolean>()
+    private val evaluator = TargetPriceAlertEvaluator(configs.map { it.toTargetAlert() }, clock = clock)
 
     @Synchronized
-    fun updateConfigs(newConfigs: List<AlertConfig>) {
-        val normalized = newConfigs.distinctBy(AlertConfig::id)
-        val oldById = configs.associateBy(AlertConfig::id)
-        val changedIds = normalized.filter { oldById[it.id] != it }.mapTo(mutableSetOf(), AlertConfig::id)
-        previousConditions.keys.retainAll(normalized.mapTo(mutableSetOf(), AlertConfig::id))
-        changedIds.forEach(previousConditions::remove)
-        configs = normalized
+    fun updateConfigs(newConfigs: List<AlertConfig>, cooldown: AlertCooldown = AlertCooldown.DEFAULT) {
+        configs = newConfigs.distinctBy(AlertConfig::id)
+        evaluator.updateAlerts(configs.map { it.toTargetAlert() })
+        evaluator.updateCooldown(cooldown)
     }
 
     @Synchronized
-    fun evaluate(tick: MarketTick): List<StrategyResult> = configs.mapNotNull { config ->
-        if (!config.enabled) {
-            previousConditions.remove(config.id)
-            return@mapNotNull null
+    fun evaluate(tick: MarketTick): List<StrategyResult> {
+        if (!tick.price.isFinite() || tick.price <= 0.0 || tick.symbol.isBlank()) return emptyList()
+        val byId = configs.associateBy(AlertConfig::id)
+        return evaluator.evaluate(TargetPriceTick(tick.symbol, tick.price)).map { result ->
+            val config = requireNotNull(byId[result.alertId])
+            StrategyResult(
+                alertId = result.alertId,
+                triggered = result.shouldNotify,
+                isConditionMet = result.crossing != null,
+                message = if (result.shouldNotify) {
+                    "${config.name}：${config.symbol} 已触达/穿越 ${formatPrice(config.threshold)}；当前价格 ${formatPrice(tick.price)}"
+                } else null,
+                evaluatedAtMillis = result.evaluatedAtMillis
+            )
         }
-        if (tick.symbol != config.symbol) return@mapNotNull null
-
-        val condition = when (config.direction) {
-            AlertDirection.ABOVE_OR_EQUAL -> tick.price >= config.threshold
-            AlertDirection.BELOW_OR_EQUAL -> tick.price <= config.threshold
-        }
-        val triggered = previousConditions[config.id] == false && condition
-        previousConditions[config.id] = condition
-        val operator = if (config.direction == AlertDirection.ABOVE_OR_EQUAL) "突破" else "跌破"
-        StrategyResult(
-            alertId = config.id,
-            triggered = triggered,
-            isConditionMet = condition,
-            message = if (triggered) {
-                "${config.name}：${config.symbol} 已$operator ${formatPrice(config.threshold)}；当前价格 ${formatPrice(tick.price)}"
-            } else null
-        )
     }
 
     @Synchronized
-    fun reset() {
-        previousConditions.clear()
-    }
+    fun reset() = evaluator.reset()
 
     private fun formatPrice(value: Double): String =
         if (value % 1.0 == 0.0) "%.0f".format(value) else "%.2f".format(value)
 }
+
+private fun AlertConfig.toTargetAlert() = TargetPriceAlert(id, name, assetId, symbol, enabled, threshold)

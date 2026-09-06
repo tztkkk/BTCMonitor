@@ -313,6 +313,20 @@ TASK-011 的持久化迁移按以下设计执行，本 TASK 不修改 DataStore�
 5. 全局 cooldown 单独持久化，只接受 1、5、15、30、60 分钟；缺失或非法值回退 5 分钟。
 6. 生产 `Service`/`StrategyEngine` 只有在 TASK-011 完成 schema 迁移后才切换到新 evaluator；切换时不双写旧、新策略状态，首 Tick 重新建立内存基线。
 
+#### TASK-011 production migration (2026-09-06)
+
+生产 SettingsRepository 已在首次读写前通过 Preferences DataMigration 原子迁移到
+`target_alerts_json_v1`，JSON 使用 `targetPrice`；为减少无关调用方变动，现有
+`AlertConfig.threshold` 作为配置模型字段保留，direction 已删除。
+旧 `alerts_json_v2` / 单提醒键保留为恢复数据，不再作为生产写入目标。
+新 schema 存在（包括空列表）时不重新导入；旧数组按条容错、按 ID 去重，
+根 JSON 无法解析则迁移失败并保留原文件，不覆盖成默认提醒。
+全局冷却独立保存为 `alert_cooldown_minutes_v1`，缺失/非法值归一到 5 分钟。
+StrategyEngine 现在只适配配置、Tick 和 StrategyResult，唯一判断状态由
+TargetPriceAlertEvaluator 持有；Service 在同一次配置更新中传入冷却值。
+仅修改名称或冷却设置不重建基线，改价/启停仅重置对应提醒。
+TASK-014 的冷却设置 UI 尚未接入，Android 16 真机验收仍待完成。
+
 ### 3.4 Indicator
 
 Indicator 是纯计算或明确状态化的可复用能力，例如 EMA、RSI、MACD、ATR、Volume。要求：

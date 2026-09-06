@@ -8,7 +8,6 @@ import com.tzt.btcmonitor.AppContainer
 import com.tzt.btcmonitor.BuildConfig
 import com.tzt.btcmonitor.market.MarketDataProbe
 import com.tzt.btcmonitor.market.MarketProbeUiState
-import com.tzt.btcmonitor.model.AlertDirection
 import com.tzt.btcmonitor.model.AlertConfig
 import com.tzt.btcmonitor.model.CandleTimeframe
 import com.tzt.btcmonitor.model.WatchAsset
@@ -114,27 +113,27 @@ class MonitorViewModel(application: Application) : AndroidViewModel(application)
         candleChart.loadOlder(anchor)
     }
 
-    fun addAlert(asset: WatchAsset, name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
+    fun addAlert(asset: WatchAsset, name: String, enabled: Boolean, thresholdText: String, onResult: (String) -> Unit) {
         val threshold = thresholdText.toDoubleOrNull()
-        if (threshold == null || threshold <= 0.0) {
+        if (threshold == null || !threshold.isFinite() || threshold <= 0.0) {
             onResult("请输入有效的正数价格")
             return
         }
         viewModelScope.launch {
-            runCatching { AppContainer.settings.addAlert(asset, name, enabled, direction, threshold) }
+            runCatching { AppContainer.settings.addAlert(asset, name, enabled, threshold) }
                 .onSuccess { onResult("提醒已添加") }
                 .onFailure { onResult("保存失败：${it.message}") }
         }
     }
 
-    fun updateAlert(alert: AlertConfig, name: String, enabled: Boolean, direction: AlertDirection, thresholdText: String, onResult: (String) -> Unit) {
+    fun updateAlert(alert: AlertConfig, name: String, enabled: Boolean, thresholdText: String, onResult: (String) -> Unit) {
         val threshold = thresholdText.toDoubleOrNull()
-        if (threshold == null || threshold <= 0.0) {
+        if (threshold == null || !threshold.isFinite() || threshold <= 0.0) {
             onResult("请输入有效的正数价格")
             return
         }
         viewModelScope.launch {
-            runCatching { AppContainer.settings.updateAlert(alert.id, name, enabled, direction, threshold) }
+            runCatching { AppContainer.settings.updateAlert(alert.id, name, enabled, threshold) }
                 .onSuccess { onResult("提醒已更新") }
                 .onFailure { onResult("保存失败：${it.message}") }
         }

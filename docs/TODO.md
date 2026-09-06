@@ -167,7 +167,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 ### TASK-011
 
 **Title:** 迁移旧方向提醒并持久化全局冷却设置  
-**Status:** TODO  
+**Status:** REVIEW
 **Priority:** P1  
 **Goal:** 在不丢失用户配置的前提下，把现有提醒正式迁移为双向到价提醒，并保存统一 cooldown。  
 **Scope:** 建立新提醒 schema/version；迁移旧 `AlertConfig`，保留 ID、name、assetId、symbol、enabled、threshold，移除 direction；DataStore 增加全局 cooldown 固定值，默认 5 分钟；生产 Service/Strategy 接入 TASK-005 evaluator；保留现有提醒 CRUD 能力。  
@@ -175,7 +175,7 @@ TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED | REFACTOR
 **Acceptance Criteria:** 旧 JSON 样例迁移不丢字段、不重复；已迁移数据可 round-trip；非法 cooldown 回退 5 分钟；Service 使用双向穿越并遵守冷却；冷却期继续跟踪所在侧；升级后现有提醒列表可用；单元测试、Build 和 Android 16 升级冒烟通过。  
 **Dependencies:** TASK-005.  
 **Affected Modules:** `model`, `settings/SettingsRepository`, `strategy`, `service`, tests.  
-**Notes:** 与纯 chart TASK 可 **Parallel Safe**，但 **Cannot Run In Parallel** with任何 SettingsRepository/StrategyEngine/Service/schema 工作。
+**Notes:** 与纯 chart TASK 可 **Parallel Safe**，但 **Cannot Run In Parallel** with任何 SettingsRepository/StrategyEngine/Service/schema 工作。2026-09-06 实现完成：Preferences DataMigration 原子迁移到 target_alerts_json_v1，保留旧键作为恢复数据；逐条容错并按 ID 去重，新 schema 存在时不重复导入。新持久化字段 targetPrice 映射到现有 AlertConfig.threshold，移除 direction；全局冷却独立保存，非法值回退 5 分钟。StrategyEngine 复用 TASK-005 evaluator，Service 同步配置和全局冷却；列表/编辑器移除方向选择及旧条件判断，保留 CRUD。71 项 Debug / 65 项 Release 单测、两变体 Lint/assemble 与测试 APK 构建通过；API 36 模拟器通过真实 DataStore 旧文件迁移、CRUD/重开、独立通知及图表渲染/手势/分页共 5 项 instrumentation，主界面升级保留原提醒且编辑器可用。代码自审未发现 Critical/Major 问题。当前无连接的 Android 16 真机，真实旧配置升级、前后台/锁屏/网络切换矩阵仍待验证，按 DoD 保持 REVIEW，不标记 DONE；详见 ANDROID16_TESTING.md TASK-011 记录。
 
 ### TASK-012
 
